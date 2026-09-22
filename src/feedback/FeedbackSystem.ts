@@ -150,6 +150,9 @@ export class FeedbackSystem {
     this.unsub.push(
       this.bus.on(GameEvents.RunEnded, () => {
         this.audio.stopBed()
+        // Clear level flash so it cannot disagree with the result dialog
+        this.milestoneFlash = null
+        this.flash = null
       }),
     )
     this.unsub.push(
@@ -180,8 +183,9 @@ export class FeedbackSystem {
     this.unsub.push(
       this.bus.on<{ level: number; from: number }>(GameEvents.LevelUp, (p) => {
         this.audio.playMilestone()
+        // Show the level just cleared (from), not the next unlock number
         this.milestoneFlash = {
-          text: `${t('level')} ${p.level}`,
+          text: `${t('level')} ${p.from}`,
           life: 0.9,
           maxLife: 0.9,
           color: '#7dffb3',

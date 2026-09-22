@@ -122,8 +122,9 @@ export class ResultView {
 
     this.pendingNextLevel = canOfferNext ? payload.level + 1 : 0
 
+    // Always keep the played level number visible; status is separate
     if (payload.levelCleared) {
-      levelEl.textContent = t('levelCleared')
+      levelEl.textContent = `${t('levelCleared')} · ${payload.stats.score}/${payload.clearScore}`
     } else if (payload.clearScore > 0) {
       levelEl.textContent = `${payload.stats.score}/${payload.clearScore}`
     } else {

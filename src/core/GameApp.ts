@@ -75,7 +75,7 @@ export class GameApp {
       .join('')
 
     const prog = this.save.getLevelProgress()
-    const levelHint = `${t('level')} ${prog.unlocked}/${LEVEL_COUNT}`
+    const levelHint = `${t('unlocked')} ${prog.unlocked}/${LEVEL_COUNT}`
 
     root.innerHTML = `
       <div class="game-shell">
@@ -128,7 +128,7 @@ export class GameApp {
     this.audio.setSoundPack(this.save.get().activeSound || defaultSoundPackId)
 
     this.run.setBestUpdater((score, combo, accuracy, modeId, seed) =>
-      this.save.recordRun(score, combo, accuracy, modeId, seed, this.activeLevel),
+      this.save.recordRun(score, combo, accuracy, modeId, seed, this.run.getLevel()),
     )
 
     this.result.setHandlers(
@@ -329,7 +329,7 @@ export class GameApp {
     const prog = this.save.getLevelProgress()
     const hint = this.root.querySelector('[data-mode-hint]')
     if (hint) {
-      hint.textContent = `${t('level')} ${prog.unlocked}/${LEVEL_COUNT}`
+      hint.textContent = `${t('unlocked')} ${prog.unlocked}/${LEVEL_COUNT}`
     }
   }
 
