@@ -230,8 +230,15 @@ export class GameApp {
       this.audio.setSuspended(hidden)
     })
 
-    window.addEventListener('pointerdown', () => this.audio.unlock(), { once: true })
-    window.addEventListener('keydown', () => this.audio.unlock(), { once: true })
+    window.addEventListener('pointerdown', () => {
+      this.audio.unlock()
+    })
+    window.addEventListener('keydown', () => {
+      this.audio.unlock()
+    })
+    window.addEventListener('touchstart', () => {
+      this.audio.unlock()
+    }, { passive: true })
 
     this.hud.setVisible(false)
     this.time.start()
@@ -372,6 +379,8 @@ export class GameApp {
   }
 
   private startPlaying(modeId: GameModeId): void {
+    this.audio.unlock()
+    void this.audio.resume()
     this.activeMode = modeId
     this.run.setMode(modeId)
     this.showMenu = false

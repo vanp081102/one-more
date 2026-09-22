@@ -4,7 +4,6 @@ import { soundPacks, defaultSoundPackId, type SoundPackDef } from '../data/Sound
 /** Procedural Web Audio — combo layers fill in; miss cuts them. */
 export class AudioManager {
   private ctx: AudioContext | null = null
-  private unlocked = false
   private volume = 0.35
   private master: GainNode | null = null
   private layerGains: GainNode[] = []
@@ -16,19 +15,37 @@ export class AudioManager {
   private muted = false
   private pack: SoundPackDef = soundPacks[defaultSoundPackId]!
 
+  /** Create context on first gesture; always re-resume if suspended. */
   unlock(): void {
-    if (this.unlocked) return
     const Ctx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     if (!Ctx) return
-    this.ctx = new Ctx()
-    void this.ctx.resume()
-    this.master = this.ctx.createGain()
-    this.master.gain.value = this.muted ? 0 : this.volume
-    this.master.connect(this.ctx.destination)
-    this.unlocked = true
-    this.setupBed()
+
+    if (!this.ctx) {
+      this.ctx = new Ctx()
+      this.master = this.ctx.createGain()
+      this.master.gain.value = this.muted ? 0 : this.volume
+      this.master.connect(this.ctx.destination)
+      this.setupBed()
+    }
+
+    void this.resume()
+  }
+
+  /** Resume AudioContext after autoplay policy / tab focus. */
+  async resume(): Promise<void> {
+    if (!this.ctx) return
+    if (this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume()
+      } catch {
+        // browser may still block until next gesture
+      }
+    }
+    if (this.master && !this.muted) {
+      this.master.gain.value = this.volume
+    }
   }
 
   setVolume(v: number): void {
@@ -57,7 +74,7 @@ export class AudioManager {
   setSuspended(suspended: boolean): void {
     if (!this.ctx) return
     if (suspended) void this.ctx.suspend()
-    else void this.ctx.resume()
+    else void this.resume()
   }
 
   dispose(): void {
@@ -77,14 +94,13 @@ export class AudioManager {
       this.ctx = null
     }
     this.master = null
-    this.unlocked = false
     this.bedPlaying = false
   }
 
   /** Start ambient bed (call on run start). */
   startBed(): void {
-    this.unlock()
-    if (!this.ctx || !this.master || this.bedPlaying) return
+    if (!this.ensureReady()) return
+    if (this.bedPlaying) return
     this.bedPlaying = true
     this.setComboLevel(0)
     this.fadeLayers(true)
@@ -100,9 +116,9 @@ export class AudioManager {
   /** Combo fills soundtrack layers (0–5). */
   setComboLevel(combo: number): void {
     this.comboLevel = combo
-    if (!this.ctx) return
+    if (!this.ensureReady()) return
     const active = Math.min(5, Math.floor(combo / 10) + (combo > 0 ? 1 : 0))
-    const now = this.ctx.currentTime
+    const now = this.ctx!.currentTime
     for (let i = 0; i < this.layerGains.length; i++) {
       const g = this.layerGains[i]
       if (!g) continue
@@ -113,6 +129,7 @@ export class AudioManager {
   }
 
   playHold(): void {
+    if (!this.ensureReady()) return
     this.tone(180, 0.04, 'sine', 0.08)
     this.startMovement()
   }
@@ -121,7 +138,7 @@ export class AudioManager {
     if (!this.ctx || !this.movementGain || !this.movementOsc) return
     const now = this.ctx.currentTime
     this.movementGain.gain.cancelScheduledValues(now)
-    this.movementGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05)
+    this.movementGain.gain.linearRampToValueAtTime(0.0001, now + 0.05)
     try {
       this.movementOsc.stop(now + 0.06)
     } catch {
@@ -132,6 +149,7 @@ export class AudioManager {
   }
 
   playRelease(grade: Grade): void {
+    if (!this.ensureReady()) return
     this.stopMovement()
     const p = this.pack.pitchMul
     const wave = this.pack.wave
@@ -155,69 +173,73 @@ export class AudioManager {
   }
 
   playMiss(): void {
+    if (!this.ensureReady()) return
     this.stopMovement()
     this.cutBed()
     this.tone(120, 0.22, 'sawtooth', 0.16)
   }
 
   playGameOver(): void {
+    if (!this.ensureReady()) return
     this.tone(90, 0.3, 'sine', 0.12)
   }
 
   playCombo(): void {
+    if (!this.ensureReady()) return
     this.tone(740, 0.07, 'square', 0.07)
     this.tone(1110, 0.05, 'sine', 0.05)
   }
 
   playPhaseChange(): void {
+    if (!this.ensureReady()) return
     this.chord([392, 523, 784], 0.22)
   }
 
   playChaosEnter(): void {
+    if (!this.ensureReady()) return
     this.chord([220, 277, 330, 440], 0.3)
     this.tone(110, 0.35, 'sawtooth', 0.08)
   }
 
   playMasterEnter(): void {
+    if (!this.ensureReady()) return
     this.chord([523, 659, 784, 1046], 0.4)
     this.tone(1568, 0.15, 'sine', 0.05)
   }
 
   playMilestone(): void {
+    if (!this.ensureReady()) return
     this.chord([523, 659, 784, 1046], 0.28)
   }
 
   /** Soft ticks leading to ideal release on wow beat. */
   scheduleIdealCue(travelSec: number): void {
-    this.unlock()
-    if (!this.ctx || !this.master) return
-    const now = this.ctx.currentTime
+    if (!this.ensureReady()) return
+    const now = this.ctx!.currentTime
     const ideal = Math.max(0.12, travelSec)
-    // Warning ticks
     for (const t of [ideal - 0.24, ideal - 0.12]) {
       if (t > 0.02) this.toneAt(660, 0.04, 'square', 0.05, now + t)
     }
-    // Ideal pulse
     this.toneAt(990, 0.08, 'sine', 0.12, now + ideal)
     this.toneAt(1320, 0.06, 'sine', 0.08, now + ideal)
   }
 
   hardSilence(seconds: number): void {
-    if (!this.ctx || !this.master) return
+    if (!this.ensureReady() || !this.master) return
     this.stopMovement()
-    const now = this.ctx.currentTime
+    const now = this.ctx!.currentTime
+    const restore = this.muted ? 0 : this.volume
     this.master.gain.cancelScheduledValues(now)
-    this.master.gain.setValueAtTime(this.master.gain.value, now)
+    this.master.gain.setValueAtTime(Math.max(0.0001, this.master.gain.value), now)
     this.master.gain.linearRampToValueAtTime(0.0001, now + 0.05)
     this.master.gain.setValueAtTime(0.0001, now + seconds)
-    this.master.gain.linearRampToValueAtTime(this.volume, now + seconds + 0.15)
+    this.master.gain.linearRampToValueAtTime(Math.max(0.0001, restore), now + seconds + 0.15)
   }
 
   playWowComplete(): void {
+    if (!this.ensureReady()) return
     this.hardSilence(0.55)
-    if (!this.ctx) return
-    const now = this.ctx.currentTime
-    // After silence — massive chord
+    const now = this.ctx!.currentTime
     const t = now + 0.58
     for (const f of [523, 659, 784, 1046, 1568]) {
       this.toneAt(f, 0.45, 'sine', 0.1, t)
@@ -225,13 +247,24 @@ export class AudioManager {
   }
 
   playWowArmed(): void {
+    if (!this.ensureReady()) return
     this.tone(180, 0.2, 'sine', 0.1)
     this.tone(360, 0.15, 'triangle', 0.08)
   }
 
   playNewRecord(): void {
+    if (!this.ensureReady()) return
     this.chord([523, 784, 1046], 0.35)
     this.tone(1568, 0.12, 'sine', 0.06)
+  }
+
+  private ensureReady(): boolean {
+    this.unlock()
+    if (!this.ctx || !this.master) return false
+    if (this.ctx.state === 'suspended') {
+      void this.ctx.resume()
+    }
+    return true
   }
 
   private toneAt(
@@ -247,7 +280,7 @@ export class AudioManager {
     osc.type = type
     osc.frequency.setValueAtTime(freq, when)
     gain.gain.setValueAtTime(0.0001, when)
-    gain.gain.exponentialRampToValueAtTime(gainValue, when + 0.01)
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, gainValue), when + 0.01)
     gain.gain.exponentialRampToValueAtTime(0.0001, when + duration)
     osc.connect(gain)
     gain.connect(this.master)
@@ -260,7 +293,7 @@ export class AudioManager {
     const now = this.ctx.currentTime
     for (const g of this.layerGains) {
       g.gain.cancelScheduledValues(now)
-      g.gain.setValueAtTime(g.gain.value, now)
+      g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), now)
       g.gain.exponentialRampToValueAtTime(0.0001, now + 0.08)
     }
     this.bedPlaying = false
@@ -268,7 +301,7 @@ export class AudioManager {
 
   private setupBed(): void {
     if (!this.ctx || !this.master) return
-    // Five soft layers — unlocked by combo
+    if (this.layerOscs.length > 0) return
     const freqs = [110, 165, 220, 330, 440]
     for (const freq of freqs) {
       const osc = this.ctx.createOscillator()
@@ -298,8 +331,7 @@ export class AudioManager {
   }
 
   private startMovement(): void {
-    this.unlock()
-    if (!this.ctx || !this.master) return
+    if (!this.ensureReady() || !this.ctx || !this.master) return
     this.stopMovement()
     const osc = this.ctx.createOscillator()
     const gain = this.ctx.createGain()
@@ -333,7 +365,7 @@ export class AudioManager {
     osc.type = type
     osc.frequency.setValueAtTime(freq, now)
     gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.01)
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, gainValue), now + 0.01)
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
     osc.connect(gain)
     gain.connect(this.master)
