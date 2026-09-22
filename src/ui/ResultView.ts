@@ -40,6 +40,18 @@ export class ResultView {
     `
     parent.appendChild(this.root)
 
+    // Swallow presses on the dimmed backdrop — only panel buttons continue
+    this.root.addEventListener(
+      'pointerdown',
+      (e) => {
+        const t = e.target as HTMLElement | null
+        if (t?.closest?.('button')) return
+        e.preventDefault()
+        e.stopPropagation()
+      },
+      true,
+    )
+
     this.root.querySelector('[data-next-level]')!.addEventListener('click', (e) => {
       e.stopPropagation()
       this.onNextLevel?.()
