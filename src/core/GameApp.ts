@@ -219,15 +219,16 @@ export class GameApp {
       this.audio.setSuspended(hidden)
     })
 
+    // Capture phase so AudioContext resumes before gameplay consumes the gesture
     window.addEventListener('pointerdown', () => {
-      this.audio.unlock()
-    })
+      void this.audio.unlock()
+    }, { capture: true })
     window.addEventListener('keydown', () => {
-      this.audio.unlock()
-    })
+      void this.audio.unlock()
+    }, { capture: true })
     window.addEventListener('touchstart', () => {
-      this.audio.unlock()
-    }, { passive: true })
+      void this.audio.unlock()
+    }, { capture: true, passive: true })
 
     this.hud.setVisible(false)
     this.time.start()
@@ -550,7 +551,8 @@ export class GameApp {
       { ...payload, levelCleared, nextLevelUnlocked },
       unlocked,
     )
-    this.input.setEnabled(true)
+    // Buttons only — do not accept canvas/backdrop presses as "one more"
+    this.input.setEnabled(false)
     this.refreshThemeButtons()
     this.refreshSoundButtons()
     void this.pushCloudAfterRun(payload)
@@ -575,13 +577,8 @@ export class GameApp {
 
     if (!this.showMenu && !this.result.isVisible()) {
       this.run.update(dt, now)
-    } else if (this.result.isVisible()) {
-      const action = this.input.getAction()
-      if (action.justPressed) {
-        this.restartInstant()
-      }
-      this.input.endFrame()
     } else {
+      // Result / menu: only explicit buttons continue — not outside clicks
       this.input.endFrame()
     }
 

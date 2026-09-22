@@ -14,8 +14,12 @@ export class AudioManager {
   private bedPlaying = false
   private muted = false
   private pack: SoundPackDef = soundPacks[defaultSoundPackId]!
+  private resumePromise: Promise<void> | null = null
 
-  /** Create context on first gesture; always re-resume if suspended. */
+  /**
+   * Create context on first gesture; always re-resume if suspended.
+   * Must run in the user-gesture stack (capture-phase listeners).
+   */
   unlock(): void {
     const Ctx =
       window.AudioContext ||
@@ -28,6 +32,7 @@ export class AudioManager {
       this.master.gain.value = this.muted ? 0 : this.volume
       this.master.connect(this.ctx.destination)
       this.setupBed()
+      this.primeSilentBuffer()
     }
 
     void this.resume()
@@ -36,13 +41,24 @@ export class AudioManager {
   /** Resume AudioContext after autoplay policy / tab focus. */
   async resume(): Promise<void> {
     if (!this.ctx) return
-    if (this.ctx.state === 'suspended') {
+    if (this.ctx.state === 'running') {
+      if (this.master && !this.muted) this.master.gain.value = this.volume
+      return
+    }
+    if (this.resumePromise) {
+      await this.resumePromise
+      return
+    }
+    this.resumePromise = (async () => {
       try {
-        await this.ctx.resume()
+        await this.ctx!.resume()
       } catch {
         // browser may still block until next gesture
+      } finally {
+        this.resumePromise = null
       }
-    }
+    })()
+    await this.resumePromise
     if (this.master && !this.muted) {
       this.master.gain.value = this.volume
     }
@@ -95,15 +111,17 @@ export class AudioManager {
     }
     this.master = null
     this.bedPlaying = false
+    this.resumePromise = null
   }
 
   /** Start ambient bed (call on run start). */
   startBed(): void {
-    if (!this.ensureReady()) return
-    if (this.bedPlaying) return
-    this.bedPlaying = true
-    this.setComboLevel(0)
-    this.fadeLayers(true)
+    this.runWhenReady(() => {
+      if (this.bedPlaying) return
+      this.bedPlaying = true
+      this.setComboLevel(0)
+      this.fadeLayers(true)
+    })
   }
 
   stopBed(): void {
@@ -116,22 +134,25 @@ export class AudioManager {
   /** Combo fills soundtrack layers (0–5). */
   setComboLevel(combo: number): void {
     this.comboLevel = combo
-    if (!this.ensureReady()) return
-    const active = Math.min(5, Math.floor(combo / 10) + (combo > 0 ? 1 : 0))
-    const now = this.ctx!.currentTime
-    for (let i = 0; i < this.layerGains.length; i++) {
-      const g = this.layerGains[i]
-      if (!g) continue
-      const target = i < active ? (0.045 - i * 0.004) * this.pack.bedMul : 0.0001
-      g.gain.cancelScheduledValues(now)
-      g.gain.linearRampToValueAtTime(target, now + 0.12)
-    }
+    this.runWhenReady(() => {
+      if (!this.ctx) return
+      const active = Math.min(5, Math.floor(combo / 10) + (combo > 0 ? 1 : 0))
+      const now = this.ctx.currentTime
+      for (let i = 0; i < this.layerGains.length; i++) {
+        const g = this.layerGains[i]
+        if (!g) continue
+        const target = i < active ? (0.045 - i * 0.004) * this.pack.bedMul : 0.0001
+        g.gain.cancelScheduledValues(now)
+        g.gain.linearRampToValueAtTime(target, now + 0.12)
+      }
+    })
   }
 
   playHold(): void {
-    if (!this.ensureReady()) return
-    this.tone(180, 0.04, 'sine', 0.08)
-    this.startMovement()
+    this.runWhenReady(() => {
+      this.tone(180, 0.04, 'sine', 0.08)
+      this.startMovement()
+    })
   }
 
   stopMovement(): void {
@@ -149,122 +170,168 @@ export class AudioManager {
   }
 
   playRelease(grade: Grade): void {
-    if (!this.ensureReady()) return
-    this.stopMovement()
-    const p = this.pack.pitchMul
-    const wave = this.pack.wave
-    switch (grade) {
-      case Grade.Ultra:
-        this.chord([880 * p, 1320 * p, 1760 * p], 0.2)
-        this.tone(2200 * p, 0.08, wave, 0.06)
-        break
-      case Grade.Perfect:
-        this.chord([660 * p, 990 * p], 0.15)
-        break
-      case Grade.Great:
-        this.tone(520 * p, 0.1, wave === 'square' ? 'triangle' : wave, 0.12)
-        break
-      case Grade.Good:
-        this.tone(360 * p, 0.08, 'triangle', 0.1)
-        break
-      default:
-        break
-    }
+    this.runWhenReady(() => {
+      this.stopMovement()
+      const p = this.pack.pitchMul
+      const wave = this.pack.wave
+      switch (grade) {
+        case Grade.Ultra:
+          this.chord([880 * p, 1320 * p, 1760 * p], 0.2)
+          this.tone(2200 * p, 0.08, wave, 0.06)
+          break
+        case Grade.Perfect:
+          this.chord([660 * p, 990 * p], 0.15)
+          break
+        case Grade.Great:
+          this.tone(520 * p, 0.1, wave === 'square' ? 'triangle' : wave, 0.12)
+          break
+        case Grade.Good:
+          this.tone(360 * p, 0.08, 'triangle', 0.1)
+          break
+        default:
+          break
+      }
+    })
   }
 
   playMiss(): void {
-    if (!this.ensureReady()) return
-    this.stopMovement()
-    this.cutBed()
-    this.tone(120, 0.22, 'sawtooth', 0.16)
+    this.runWhenReady(() => {
+      this.stopMovement()
+      this.cutBed()
+      this.tone(120, 0.22, 'sawtooth', 0.16)
+    })
   }
 
   playGameOver(): void {
-    if (!this.ensureReady()) return
-    this.tone(90, 0.3, 'sine', 0.12)
+    this.runWhenReady(() => {
+      this.tone(90, 0.3, 'sine', 0.12)
+    })
   }
 
   playCombo(): void {
-    if (!this.ensureReady()) return
-    this.tone(740, 0.07, 'square', 0.07)
-    this.tone(1110, 0.05, 'sine', 0.05)
+    this.runWhenReady(() => {
+      this.tone(740, 0.07, 'square', 0.07)
+      this.tone(1110, 0.05, 'sine', 0.05)
+    })
   }
 
   playPhaseChange(): void {
-    if (!this.ensureReady()) return
-    this.chord([392, 523, 784], 0.22)
+    this.runWhenReady(() => {
+      this.chord([392, 523, 784], 0.22)
+    })
   }
 
   playChaosEnter(): void {
-    if (!this.ensureReady()) return
-    this.chord([220, 277, 330, 440], 0.3)
-    this.tone(110, 0.35, 'sawtooth', 0.08)
+    this.runWhenReady(() => {
+      this.chord([220, 277, 330, 440], 0.3)
+      this.tone(110, 0.35, 'sawtooth', 0.08)
+    })
   }
 
   playMasterEnter(): void {
-    if (!this.ensureReady()) return
-    this.chord([523, 659, 784, 1046], 0.4)
-    this.tone(1568, 0.15, 'sine', 0.05)
+    this.runWhenReady(() => {
+      this.chord([523, 659, 784, 1046], 0.4)
+      this.tone(1568, 0.15, 'sine', 0.05)
+    })
   }
 
   playMilestone(): void {
-    if (!this.ensureReady()) return
-    this.chord([523, 659, 784, 1046], 0.28)
+    this.runWhenReady(() => {
+      this.chord([523, 659, 784, 1046], 0.28)
+    })
   }
 
   /** Soft ticks leading to ideal release on wow beat. */
   scheduleIdealCue(travelSec: number): void {
-    if (!this.ensureReady()) return
-    const now = this.ctx!.currentTime
-    const ideal = Math.max(0.12, travelSec)
-    for (const t of [ideal - 0.24, ideal - 0.12]) {
-      if (t > 0.02) this.toneAt(660, 0.04, 'square', 0.05, now + t)
-    }
-    this.toneAt(990, 0.08, 'sine', 0.12, now + ideal)
-    this.toneAt(1320, 0.06, 'sine', 0.08, now + ideal)
+    this.runWhenReady(() => {
+      if (!this.ctx) return
+      const now = this.ctx.currentTime
+      const ideal = Math.max(0.12, travelSec)
+      for (const t of [ideal - 0.24, ideal - 0.12]) {
+        if (t > 0.02) this.toneAt(660, 0.04, 'square', 0.05, now + t)
+      }
+      this.toneAt(990, 0.08, 'sine', 0.12, now + ideal)
+      this.toneAt(1320, 0.06, 'sine', 0.08, now + ideal)
+    })
   }
 
   hardSilence(seconds: number): void {
-    if (!this.ensureReady() || !this.master) return
-    this.stopMovement()
-    const now = this.ctx!.currentTime
-    const restore = this.muted ? 0 : this.volume
-    this.master.gain.cancelScheduledValues(now)
-    this.master.gain.setValueAtTime(Math.max(0.0001, this.master.gain.value), now)
-    this.master.gain.linearRampToValueAtTime(0.0001, now + 0.05)
-    this.master.gain.setValueAtTime(0.0001, now + seconds)
-    this.master.gain.linearRampToValueAtTime(Math.max(0.0001, restore), now + seconds + 0.15)
+    this.runWhenReady(() => {
+      if (!this.ctx || !this.master) return
+      this.stopMovement()
+      const now = this.ctx.currentTime
+      const restore = this.muted ? 0 : this.volume
+      this.master.gain.cancelScheduledValues(now)
+      this.master.gain.setValueAtTime(Math.max(0.0001, this.master.gain.value), now)
+      this.master.gain.linearRampToValueAtTime(0.0001, now + 0.05)
+      this.master.gain.setValueAtTime(0.0001, now + seconds)
+      this.master.gain.linearRampToValueAtTime(Math.max(0.0001, restore), now + seconds + 0.15)
+    })
   }
 
   playWowComplete(): void {
-    if (!this.ensureReady()) return
-    this.hardSilence(0.55)
-    const now = this.ctx!.currentTime
-    const t = now + 0.58
-    for (const f of [523, 659, 784, 1046, 1568]) {
-      this.toneAt(f, 0.45, 'sine', 0.1, t)
-    }
+    this.runWhenReady(() => {
+      if (!this.ctx || !this.master) return
+      this.stopMovement()
+      const now = this.ctx.currentTime
+      const restore = this.muted ? 0 : this.volume
+      this.master.gain.cancelScheduledValues(now)
+      this.master.gain.setValueAtTime(Math.max(0.0001, this.master.gain.value), now)
+      this.master.gain.linearRampToValueAtTime(0.0001, now + 0.05)
+      this.master.gain.setValueAtTime(0.0001, now + 0.55)
+      this.master.gain.linearRampToValueAtTime(Math.max(0.0001, restore), now + 0.7)
+      const t = now + 0.58
+      for (const f of [523, 659, 784, 1046, 1568]) {
+        this.toneAt(f, 0.45, 'sine', 0.1, t)
+      }
+    })
   }
 
   playWowArmed(): void {
-    if (!this.ensureReady()) return
-    this.tone(180, 0.2, 'sine', 0.1)
-    this.tone(360, 0.15, 'triangle', 0.08)
+    this.runWhenReady(() => {
+      this.tone(180, 0.2, 'sine', 0.1)
+      this.tone(360, 0.15, 'triangle', 0.08)
+    })
   }
 
   playNewRecord(): void {
-    if (!this.ensureReady()) return
-    this.chord([523, 784, 1046], 0.35)
-    this.tone(1568, 0.12, 'sine', 0.06)
+    this.runWhenReady(() => {
+      this.chord([523, 784, 1046], 0.35)
+      this.tone(1568, 0.12, 'sine', 0.06)
+    })
   }
 
-  private ensureReady(): boolean {
+  /**
+   * Run audio work only after the context is running.
+   * Sounds scheduled while suspended are dropped by browsers.
+   */
+  private runWhenReady(fn: () => void): void {
     this.unlock()
-    if (!this.ctx || !this.master) return false
-    if (this.ctx.state === 'suspended') {
-      void this.ctx.resume()
+    if (!this.ctx || !this.master || this.muted) return
+    if (this.ctx.state === 'running') {
+      fn()
+      return
     }
-    return true
+    void this.resume().then(() => {
+      if (this.ctx?.state === 'running' && this.master && !this.muted) fn()
+    })
+  }
+
+  /** iOS often needs a silent buffer kick to fully unlock. */
+  private primeSilentBuffer(): void {
+    if (!this.ctx || !this.master) return
+    try {
+      const buf = this.ctx.createBuffer(1, 1, this.ctx.sampleRate)
+      const src = this.ctx.createBufferSource()
+      src.buffer = buf
+      const g = this.ctx.createGain()
+      g.gain.value = 0.0001
+      src.connect(g)
+      g.connect(this.master)
+      src.start(0)
+    } catch {
+      // ignore
+    }
   }
 
   private toneAt(
@@ -327,11 +394,19 @@ export class AudioManager {
       }
       return
     }
-    this.setComboLevel(this.comboLevel)
+    // Apply current combo level without re-entering runWhenReady recursion
+    const active = Math.min(5, Math.floor(this.comboLevel / 10) + (this.comboLevel > 0 ? 1 : 0))
+    for (let i = 0; i < this.layerGains.length; i++) {
+      const g = this.layerGains[i]
+      if (!g) continue
+      const target = i < active ? (0.045 - i * 0.004) * this.pack.bedMul : 0.0001
+      g.gain.cancelScheduledValues(now)
+      g.gain.linearRampToValueAtTime(target, now + 0.12)
+    }
   }
 
   private startMovement(): void {
-    if (!this.ensureReady() || !this.ctx || !this.master) return
+    if (!this.ctx || !this.master) return
     this.stopMovement()
     const osc = this.ctx.createOscillator()
     const gain = this.ctx.createGain()
