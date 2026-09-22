@@ -1,5 +1,5 @@
 /* ONE MORE — offline shell cache */
-const CACHE = 'one-more-v2'
+const CACHE = 'one-more-v4'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
