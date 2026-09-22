@@ -40,8 +40,22 @@ export class ResultView {
     `
     parent.appendChild(this.root)
 
+    // Swallow presses on the dimmed backdrop — only panel buttons continue
+    this.root.addEventListener(
+      'pointerdown',
+      (e) => {
+        const t = e.target as HTMLElement | null
+        if (t?.closest?.('button')) return
+        e.preventDefault()
+        e.stopPropagation()
+      },
+      true,
+    )
+
     this.root.querySelector('[data-next-level]')!.addEventListener('click', (e) => {
       e.stopPropagation()
+      // Ignore clicks when next level is not offered (fail / hidden)
+      if (this.pendingNextLevel <= 0) return
       this.onNextLevel?.()
     })
     this.root.querySelector('[data-one-more]')!.addEventListener('click', (e) => {
@@ -105,13 +119,15 @@ export class ResultView {
 
     const canOfferNext =
       payload.levelCleared &&
+      payload.endReason === 'complete' &&
       payload.level < LEVEL_COUNT &&
-      (payload.nextLevelUnlocked || payload.endReason === 'complete')
+      payload.nextLevelUnlocked
 
     this.pendingNextLevel = canOfferNext ? payload.level + 1 : 0
 
+    // Always keep the played level number visible; status is separate
     if (payload.levelCleared) {
-      levelEl.textContent = t('levelCleared')
+      levelEl.textContent = `${t('levelCleared')} · ${payload.stats.score}/${payload.clearScore}`
     } else if (payload.clearScore > 0) {
       levelEl.textContent = `${payload.stats.score}/${payload.clearScore}`
     } else {
@@ -121,16 +137,27 @@ export class ResultView {
     if (canOfferNext) {
       askEl.textContent = `${t('clearAsk')} ${this.pendingNextLevel}?`
       nextBtn.classList.remove('hidden')
+      nextBtn.removeAttribute('hidden')
+      nextBtn.removeAttribute('aria-hidden')
+      nextBtn.removeAttribute('disabled')
+      nextBtn.style.display = ''
       nextBtn.textContent = `${t('goNextLevel')} ${this.pendingNextLevel}`
       oneMoreBtn.classList.remove('btn-primary')
       oneMoreBtn.classList.add('btn-ghost')
       oneMoreBtn.textContent = t('retryLevel')
     } else {
+      // Lost / not cleared: never offer next level
       askEl.textContent = ''
+      this.pendingNextLevel = 0
       nextBtn.classList.add('hidden')
+      nextBtn.setAttribute('hidden', '')
+      nextBtn.setAttribute('aria-hidden', 'true')
+      nextBtn.setAttribute('disabled', '')
+      nextBtn.style.display = 'none'
+      nextBtn.textContent = t('goNextLevel')
       oneMoreBtn.classList.add('btn-primary')
       oneMoreBtn.classList.remove('btn-ghost')
-      oneMoreBtn.textContent = t('oneMore')
+      oneMoreBtn.textContent = t('retryLevel')
     }
 
     this.root.querySelector('[data-score]')!.textContent = String(payload.stats.score)
@@ -141,7 +168,7 @@ export class ResultView {
     this.root.querySelector('[data-seed]')!.textContent = `${t('seed')} ${payload.seed}`
 
     const missEl = this.root.querySelector('[data-miss]')!
-    if (payload.endReason === 'complete' || payload.levelCleared) {
+    if (payload.levelCleared && payload.endReason === 'complete') {
       missEl.textContent = t('levelCleared')
     } else if (payload.endReason === 'imperfect') {
       missEl.textContent = gradeLabel(payload.judgement.grade)

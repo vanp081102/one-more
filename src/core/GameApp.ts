@@ -52,6 +52,8 @@ export class GameApp {
   private activeMode: GameModeId = GameModeId.Classic
   private activeLevel = 1
   private lastSeed = 0
+  /** Level just cleared on the current result screen; null if fail / not cleared */
+  private clearedLevelForAdvance: number | null = null
 
   constructor(root: HTMLElement) {
     this.root = root
@@ -75,7 +77,7 @@ export class GameApp {
       .join('')
 
     const prog = this.save.getLevelProgress()
-    const levelHint = `${t('level')} ${prog.unlocked}/${LEVEL_COUNT}`
+    const levelHint = `${t('unlocked')} ${prog.unlocked}/${LEVEL_COUNT}`
 
     root.innerHTML = `
       <div class="game-shell">
@@ -128,7 +130,7 @@ export class GameApp {
     this.audio.setSoundPack(this.save.get().activeSound || defaultSoundPackId)
 
     this.run.setBestUpdater((score, combo, accuracy, modeId, seed) =>
-      this.save.recordRun(score, combo, accuracy, modeId, seed, this.activeLevel),
+      this.save.recordRun(score, combo, accuracy, modeId, seed, this.run.getLevel()),
     )
 
     this.result.setHandlers(
@@ -219,15 +221,16 @@ export class GameApp {
       this.audio.setSuspended(hidden)
     })
 
+    // Capture phase so AudioContext resumes before gameplay consumes the gesture
     window.addEventListener('pointerdown', () => {
-      this.audio.unlock()
-    })
+      void this.audio.unlock()
+    }, { capture: true })
     window.addEventListener('keydown', () => {
-      this.audio.unlock()
-    })
+      void this.audio.unlock()
+    }, { capture: true })
     window.addEventListener('touchstart', () => {
-      this.audio.unlock()
-    }, { passive: true })
+      void this.audio.unlock()
+    }, { capture: true, passive: true })
 
     this.hud.setVisible(false)
     this.time.start()
@@ -328,7 +331,7 @@ export class GameApp {
     const prog = this.save.getLevelProgress()
     const hint = this.root.querySelector('[data-mode-hint]')
     if (hint) {
-      hint.textContent = `${t('level')} ${prog.unlocked}/${LEVEL_COUNT}`
+      hint.textContent = `${t('unlocked')} ${prog.unlocked}/${LEVEL_COUNT}`
     }
   }
 
@@ -423,12 +426,20 @@ export class GameApp {
   }
 
   private startPlaying(level = 1): void {
+    const prog = this.save.getLevelProgress()
+    const lv = Math.max(1, Math.min(LEVEL_COUNT, Math.floor(level)))
+    // Progression lock: cannot start a level that is still locked
+    if (lv > prog.unlocked) {
+      this.openLevelSelect()
+      return
+    }
     this.audio.unlock()
     void this.audio.resume()
     this.activeMode = GameModeId.Classic
-    this.activeLevel = level
+    this.activeLevel = lv
+    this.clearedLevelForAdvance = null
     this.run.setMode(GameModeId.Classic)
-    this.run.setLevel(level)
+    this.run.setLevel(lv)
     this.showMenu = false
     const menu = this.root.querySelector('[data-menu]') as HTMLElement
     menu.classList.add('hidden')
@@ -447,6 +458,7 @@ export class GameApp {
   }
 
   private restartInstant(): void {
+    this.clearedLevelForAdvance = null
     this.audio.unlock()
     this.run.setMode(this.activeMode)
     this.run.setLevel(this.activeLevel)
@@ -460,11 +472,24 @@ export class GameApp {
   }
 
   private goNextLevel(): void {
-    if (this.activeLevel >= LEVEL_COUNT) {
-      this.goHome()
+    const prog = this.save.getLevelProgress()
+    const clearedLv = this.clearedLevelForAdvance
+    // Only advance from a result that just cleared this level
+    if (clearedLv == null || clearedLv !== this.activeLevel) {
+      this.restartInstant()
       return
     }
-    this.startPlaying(this.activeLevel + 1)
+    const next = clearedLv + 1
+    if (
+      next > LEVEL_COUNT ||
+      !prog.cleared.includes(clearedLv) ||
+      next > prog.unlocked
+    ) {
+      this.restartInstant()
+      return
+    }
+    this.clearedLevelForAdvance = null
+    this.startPlaying(next)
   }
 
   /** Same seed — practice the run that just ended. */
@@ -506,29 +531,31 @@ export class GameApp {
       modeId: payload.modeId,
       endReason: payload.endReason,
     })
-    let levelCleared = false
+    const curDef = getLevelDef(payload.level)
+    // Cleared only when this run hit the goal AND ended as a complete (not a miss)
+    const levelCleared =
+      payload.endReason === 'complete' &&
+      payload.stats.score >= curDef.clearScore
     let nextLevelUnlocked = false
     const toRecord = new Set(this.run.getClearedDuringRun())
-    const curDef = getLevelDef(payload.level)
-    if (payload.stats.score >= curDef.clearScore) {
+    if (levelCleared) {
       toRecord.add(payload.level)
     }
     for (const lv of [...toRecord].sort((a, b) => a - b)) {
       const def = getLevelDef(lv)
       const r = this.save.recordLevelRun(lv, payload.stats.score, def.clearScore)
-      if (r.cleared) levelCleared = true
       if (r.unlockedNext) nextLevelUnlocked = true
     }
-    const peak = Math.min(LEVEL_COUNT, Math.max(payload.level, ...toRecord, 1))
     const prog = this.save.getLevelProgress()
-    if (peak > prog.unlocked) {
-      this.save.applyLevelProgress({
-        ...prog,
-        unlocked: Math.min(LEVEL_COUNT, Math.max(prog.unlocked, peak)),
-      })
+    if (levelCleared && payload.level < LEVEL_COUNT && prog.unlocked > payload.level) {
       nextLevelUnlocked = true
     }
+    // Track best on fail without unlocking
+    if (!levelCleared && payload.stats.score > 0) {
+      this.save.recordLevelRun(payload.level, payload.stats.score, curDef.clearScore)
+    }
     this.activeLevel = payload.level
+    this.clearedLevelForAdvance = levelCleared ? payload.level : null
     if (payload.isNewBest) this.audio.playNewRecord()
     this.lastSeed = payload.seed
     this.hud.setVisible(false)
@@ -536,7 +563,8 @@ export class GameApp {
       { ...payload, levelCleared, nextLevelUnlocked },
       unlocked,
     )
-    this.input.setEnabled(true)
+    // Buttons only — do not accept canvas/backdrop presses as "one more"
+    this.input.setEnabled(false)
     this.refreshThemeButtons()
     this.refreshSoundButtons()
     void this.pushCloudAfterRun(payload)
@@ -561,13 +589,8 @@ export class GameApp {
 
     if (!this.showMenu && !this.result.isVisible()) {
       this.run.update(dt, now)
-    } else if (this.result.isVisible()) {
-      const action = this.input.getAction()
-      if (action.justPressed) {
-        this.restartInstant()
-      }
-      this.input.endFrame()
     } else {
+      // Result / menu: only explicit buttons continue — not outside clicks
       this.input.endFrame()
     }
 

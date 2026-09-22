@@ -28,7 +28,14 @@ export class InputManager {
     }
     const onPointerDown = (e: Event) => {
       const el = e.target as HTMLElement | null
-      if (el?.closest?.('button, .menu, .result-panel, .overlay-panel, .overlay-card, .hud-back')) return
+      // Ignore UI chrome / dialogs (incl. backdrop) so outside clicks never drive gameplay
+      if (
+        el?.closest?.(
+          'button, a, input, select, textarea, .menu, .result, .result-panel, .overlay-panel, .overlay-card, .overlay-root, .hud-back',
+        )
+      ) {
+        return
+      }
       const pe = e as PointerEvent
       if ('button' in pe && pe.button !== 0 && pe.pointerType === 'mouse') return
       e.preventDefault()

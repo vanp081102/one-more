@@ -303,8 +303,10 @@ body {
 }
 
 .menu.hidden,
-.result.hidden {
-  display: none;
+.result.hidden,
+.result .hidden,
+.result [data-next-level][hidden] {
+  display: none !important;
 }
 
 .menu h1 {
@@ -535,6 +537,18 @@ body {
 
 .overlay-panel.hidden {
   display: none;
+}
+
+/* Same modal treatment for result: full-bleed blocker over the canvas */
+.result {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  background: rgba(7, 8, 12, 0.72);
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .overlay-card {
@@ -785,16 +799,6 @@ body {
   background: transparent;
   color: var(--muted);
   margin-top: 8px;
-}
-
-.result {
-  position: absolute;
-  inset: 0;
-  z-index: 6;
-  display: grid;
-  place-items: center;
-  background: rgba(7, 8, 12, 0.72);
-  pointer-events: auto;
 }
 
 .result-panel {
