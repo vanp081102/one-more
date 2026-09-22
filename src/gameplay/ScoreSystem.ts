@@ -4,6 +4,7 @@ import { Grade } from '../core/types'
 export class ScoreSystem {
   private score = 0
   private config: ScoreConfig
+  private scoreMul = 1
 
   constructor(config: ScoreConfig) {
     this.config = config
@@ -13,8 +14,17 @@ export class ScoreSystem {
     return this.score
   }
 
+  setScoreMul(mul: number): void {
+    this.scoreMul = Math.max(0.2, Math.min(1.5, mul))
+  }
+
+  getScoreMul(): number {
+    return this.scoreMul
+  }
+
   reset(): void {
     this.score = 0
+    this.scoreMul = 1
   }
 
   getBasePoints(grade: Grade): number {
@@ -46,7 +56,9 @@ export class ScoreSystem {
 
   /** Apply points for a successful hit using combo *after* increment. */
   applyHit(grade: Grade, comboAfterHit: number): number {
-    const gained = this.getBasePoints(grade) * this.getMultiplier(comboAfterHit)
+    const gained = Math.round(
+      this.getBasePoints(grade) * this.getMultiplier(comboAfterHit) * this.scoreMul,
+    )
     this.score += gained
     return gained
   }

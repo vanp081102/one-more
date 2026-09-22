@@ -30,17 +30,30 @@ function memoryStorage(): Storage {
 describe('SaveService Phase 9 meta', () => {
   it('tracks new best and leaderboard', () => {
     const save = new SaveService(memoryStorage())
-    const a = save.recordRun(500, 5, 1, GameModeId.Classic, 1)
+    const a = save.recordRun(500, 5, 1, GameModeId.Classic, 1, 3)
     expect(a.isNewBest).toBe(true)
     expect(save.getLeaderboard()).toHaveLength(1)
 
-    const b = save.recordRun(200, 2, 1, GameModeId.Endless, 2)
+    const b = save.recordRun(200, 2, 1, GameModeId.Classic, 2, 1)
     expect(b.isNewBest).toBe(false)
     expect(save.getLeaderboard()[0]!.score).toBe(500)
 
-    const c = save.recordRun(900, 9, 1, GameModeId.Chaos, 3)
+    const c = save.recordRun(900, 9, 1, GameModeId.Classic, 3, 20)
     expect(c.isNewBest).toBe(true)
-    expect(save.getLeaderboard()[0]!.modeId).toBe(GameModeId.Chaos)
+    expect(save.getLeaderboard()[0]!.modeId).toBe(GameModeId.Classic)
+    expect(save.getLeaderboard()[0]!.level).toBe(20)
+  })
+
+  it('ranks by total score across levels', () => {
+    const save = new SaveService(memoryStorage())
+    save.recordLevelRun(1, 400, 200)
+    save.recordLevelRun(2, 800, 300)
+    expect(save.getTotalScore()).toBe(1200)
+    expect(save.getStanding().level).toBeGreaterThanOrEqual(2)
+    const board = save.getLeaderboard()
+    expect(board[0]!.score).toBe(800)
+    expect(board[0]!.level).toBe(2)
+    expect(board[1]!.level).toBe(1)
   })
 
   it('updates settings', () => {

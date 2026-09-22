@@ -3,7 +3,8 @@ import { Time } from './Time'
 import { defaultTimingConfig } from '../data/TimingConfig'
 import { defaultScoreConfig } from '../data/ScoreConfig'
 import { defaultDifficultyConfig } from '../data/DifficultyConfig'
-import { GameModeId, utcDateKey, gameModes, difficultyStars } from '../data/GameModeConfig'
+import { GameModeId } from '../data/GameModeConfig'
+import { getLevelDef, LEVEL_COUNT } from '../data/LevelConfig'
 import { themes, defaultThemeId, withCustomAccent } from '../data/ThemeConfig'
 import { soundPacks, defaultSoundPackId } from '../data/SoundPackConfig'
 import { InputManager } from '../input/InputManager'
@@ -15,7 +16,9 @@ import { HudView } from '../ui/HudView'
 import { ResultView } from '../ui/ResultView'
 import { SettingsView } from '../ui/SettingsView'
 import { LeaderboardView } from '../ui/LeaderboardView'
+import { LevelSelectView } from '../ui/LevelSelectView'
 import { SaveService, type GameSettings } from '../services/SaveService'
+import { CloudService, mergeModeLevels } from '../services/CloudService'
 import { MetaProgress } from '../services/MetaProgress'
 import {
   setLang,
@@ -23,8 +26,6 @@ import {
   getLang,
   themeLabel,
   soundLabel,
-  modeLabel,
-  modeBlurb,
   type Lang,
 } from '../data/Locale'
 
@@ -34,6 +35,7 @@ export class GameApp {
   private readonly input = new InputManager()
   private readonly audio = new AudioManager()
   private readonly save = new SaveService()
+  private readonly cloud = new CloudService()
   private readonly meta: MetaProgress
   private readonly run: RunManager
   private readonly feedback: FeedbackSystem
@@ -42,11 +44,13 @@ export class GameApp {
   private readonly result: ResultView
   private readonly settingsView: SettingsView
   private readonly leaderboardView: LeaderboardView
+  private readonly levelSelect: LevelSelectView
   private readonly canvas: HTMLCanvasElement
   private readonly root: HTMLElement
   private raf = 0
   private showMenu = true
   private activeMode: GameModeId = GameModeId.Classic
+  private activeLevel = 1
   private lastSeed = 0
 
   constructor(root: HTMLElement) {
@@ -55,11 +59,6 @@ export class GameApp {
 
     const lang = this.save.get().settings.language ?? 'vi'
     setLang(lang)
-
-    const daily = this.save.getDaily()
-    const dailyHint = daily
-      ? `${t('best')} ${daily.bestScore}`
-      : utcDateKey()
 
     const themeButtons = Object.values(themes)
       .map((th) => {
@@ -75,26 +74,8 @@ export class GameApp {
       })
       .join('')
 
-    const modeOrder: GameModeId[] = [
-      GameModeId.Zen,
-      GameModeId.Perfect,
-      GameModeId.Speed,
-      GameModeId.Mirror,
-      GameModeId.Drift,
-      GameModeId.Blink,
-      GameModeId.Chaos,
-      GameModeId.Endless,
-      GameModeId.Daily,
-    ]
-    const modeCells = modeOrder
-      .map(
-        (id) => `
-          <div class="mode-cell">
-            <button type="button" class="btn-mode" data-mode="${id}" data-l="${id}">${t(id)}</button>
-            <button type="button" class="btn-mode-info" data-mode-info="${id}" aria-label="${t('modeInfo')}">?</button>
-          </div>`,
-      )
-      .join('')
+    const prog = this.save.getLevelProgress()
+    const levelHint = `${t('level')} ${prog.unlocked}/${LEVEL_COUNT}`
 
     root.innerHTML = `
       <div class="game-shell">
@@ -104,13 +85,8 @@ export class GameApp {
         <div class="menu" data-menu>
           <h1>ONE MORE</h1>
           <p class="tagline" data-tagline>${t('tagline')}</p>
-          <div class="play-row">
-            <button type="button" class="btn-primary" data-mode="classic" data-play>${t('play')}</button>
-            <button type="button" class="btn-mode-info play-info" data-mode-info="classic" aria-label="${t('modeInfo')}">?</button>
-          </div>
-          <div class="menu-modes">${modeCells}</div>
-          <p class="menu-mode-hint" data-mode-hint>${t('pickModeHint')}</p>
-          <p class="menu-daily" data-daily-hint>${dailyHint}</p>
+          <button type="button" class="btn-primary" data-play>${t('play')}</button>
+          <p class="menu-mode-hint" data-mode-hint>${levelHint}</p>
           <div class="menu-nav">
             <button type="button" class="btn-link" data-open-scores data-l="scores">${t('scores')}</button>
             <button type="button" class="btn-link" data-open-settings data-l="settings">${t('settings')}</button>
@@ -134,6 +110,7 @@ export class GameApp {
     this.result = new ResultView(overlays)
     this.settingsView = new SettingsView(overlays)
     this.leaderboardView = new LeaderboardView(overlays)
+    this.levelSelect = new LevelSelectView(overlays)
 
     this.run = new RunManager(
       this.bus,
@@ -151,13 +128,14 @@ export class GameApp {
     this.audio.setSoundPack(this.save.get().activeSound || defaultSoundPackId)
 
     this.run.setBestUpdater((score, combo, accuracy, modeId, seed) =>
-      this.save.recordRun(score, combo, accuracy, modeId, seed),
+      this.save.recordRun(score, combo, accuracy, modeId, seed, this.activeLevel),
     )
 
     this.result.setHandlers(
       () => this.restartInstant(),
       () => this.goHome(),
       () => this.replaySeed(),
+      () => this.goNextLevel(),
     )
     this.hud.setBackHandler(() => this.goHome())
 
@@ -166,22 +144,26 @@ export class GameApp {
       () => {},
       (lang) => this.changeLanguage(lang),
     )
-    this.leaderboardView.setHandlers(() => {})
-
-    root.querySelectorAll('[data-mode]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = (btn as HTMLElement).dataset.mode as GameModeId
-        this.audio.unlock()
-        this.startPlaying(id)
-      })
+    this.leaderboardView.setHandlers({
+      onClose: () => {},
+      onLoginGoogle: () => void this.handleLogin('google'),
+      onLoginGuest: () => void this.handleLogin('guest'),
+      onLogout: () => void this.handleLogout(),
+      onRefreshGlobal: () => void this.refreshGlobalLeaderboard(),
     })
+    this.leaderboardView.setCloudReady(this.cloud.isConfigured())
+    this.cloud.onAuthChanged((u) => {
+      this.leaderboardView.setUser(u)
+      if (u) void this.syncCloudProgress()
+    })
+    this.levelSelect.setHandlers(
+      (level) => this.startPlaying(level),
+      () => {},
+    )
 
-    root.querySelectorAll('[data-mode-info]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation()
-        const id = (btn as HTMLElement).dataset.modeInfo as GameModeId
-        this.showModeHint(id)
-      })
+    root.querySelector('[data-play]')!.addEventListener('click', () => {
+      this.audio.unlock()
+      this.openLevelSelect()
     })
 
     root.querySelectorAll('[data-theme]').forEach((btn) => {
@@ -213,7 +195,14 @@ export class GameApp {
     })
     root.querySelector('[data-open-scores]')!.addEventListener('click', () => {
       const d = this.save.get()
-      this.leaderboardView.show(d.leaderboard, d.streak, d.bestStreak)
+      this.leaderboardView.show(
+        this.save.getLeaderboard(),
+        d.streak,
+        d.bestStreak,
+        this.save.getAllModeLevels(),
+        this.save.getStanding(),
+      )
+      void this.refreshGlobalLeaderboard()
     })
 
     this.bus.on<HudPayload>(GameEvents.HudUpdated, (p) => this.hud.update(p))
@@ -269,14 +258,78 @@ export class GameApp {
     this.refreshLocale()
   }
 
-  private showModeHint(modeId: GameModeId): void {
-    const mode = gameModes[modeId]
-    if (!mode) return
+  private async handleLogin(kind: 'google' | 'guest'): Promise<void> {
+    if (!this.cloud.isConfigured()) {
+      this.leaderboardView.setStatus(t('cloudSetupHint'))
+      return
+    }
+    this.leaderboardView.setStatus(t('syncing'))
+    try {
+      if (kind === 'google') await this.cloud.signInGoogle()
+      else await this.cloud.signInGuest()
+      await this.syncCloudProgress()
+      this.leaderboardView.setStatus(t('synced'))
+      await this.refreshGlobalLeaderboard()
+    } catch {
+      this.leaderboardView.setStatus(t('loginFailed'))
+    }
+  }
+
+  private async handleLogout(): Promise<void> {
+    await this.cloud.signOut()
+    this.leaderboardView.setStatus(t('notLoggedIn'))
+  }
+
+  private async syncCloudProgress(): Promise<void> {
+    if (!this.cloud.getUser()) return
+    this.leaderboardView.setStatus(t('syncing'))
+    const remote = await this.cloud.loadProgress()
+    const merged = mergeModeLevels(this.save.getAllModeLevels(), remote)
+    this.save.applyModeLevels(merged)
+    await this.cloud.saveProgress(merged)
+    const standing = this.save.getStanding()
+    await this.cloud.submitStanding({
+      totalScore: standing.totalScore,
+      level: standing.level,
+      maxCombo: standing.bestCombo,
+    })
+    this.leaderboardView.setModeLevels(merged)
+    this.leaderboardView.setStanding(standing)
+    this.leaderboardView.setStatus(t('synced'))
+  }
+
+  private async refreshGlobalLeaderboard(): Promise<void> {
+    if (!this.cloud.isConfigured()) return
+    try {
+      const entries = await this.cloud.fetchLeaderboard(20)
+      this.leaderboardView.setGlobalEntries(entries)
+    } catch {
+      // ignore offline / rules
+    }
+  }
+
+  private async pushCloudAfterRun(_payload: RunEndedPayload): Promise<void> {
+    if (!this.cloud.getUser()) return
+    try {
+      await this.cloud.saveProgress(this.save.getAllModeLevels())
+      const standing = this.save.getStanding()
+      await this.cloud.submitStanding({
+        totalScore: standing.totalScore,
+        level: standing.level,
+        maxCombo: standing.bestCombo,
+      })
+      await this.refreshGlobalLeaderboard()
+    } catch {
+      // keep local progress
+    }
+  }
+
+  private showModeHint(_modeId?: GameModeId): void {
+    const prog = this.save.getLevelProgress()
     const hint = this.root.querySelector('[data-mode-hint]')
-    if (!hint) return
-    const stars = difficultyStars(mode.difficulty)
-    hint.innerHTML = `<strong>${modeLabel(modeId)}</strong> · ${t('difficulty')} ${stars}<br/><span>${modeBlurb(modeId)}</span>`
-    hint.classList.add('active')
+    if (hint) {
+      hint.textContent = `${t('level')} ${prog.unlocked}/${LEVEL_COUNT}`
+    }
   }
 
   private refreshLocale(): void {
@@ -288,17 +341,7 @@ export class GameApp {
       const key = (el as HTMLElement).dataset.l
       if (key) el.textContent = t(key)
     })
-    this.root.querySelectorAll('[data-mode-info]').forEach((el) => {
-      ;(el as HTMLElement).setAttribute('aria-label', t('modeInfo'))
-    })
-    const hint = this.root.querySelector('[data-mode-hint]')
-    if (hint && !hint.classList.contains('active')) {
-      hint.textContent = t('pickModeHint')
-    } else if (hint?.classList.contains('active')) {
-      // re-render last shown if we can parse from strong — reset to pick hint on lang change
-      hint.classList.remove('active')
-      hint.textContent = t('pickModeHint')
-    }
+    this.showModeHint()
     this.root.querySelectorAll('[data-theme]').forEach((el) => {
       const id = (el as HTMLElement).dataset.theme
       if (!id) return
@@ -320,11 +363,7 @@ export class GameApp {
     this.result.applyLocale()
     this.settingsView.applyLocale()
     this.leaderboardView.applyLocale()
-    const daily = this.save.getDaily()
-    const dHint = this.root.querySelector('[data-daily-hint]')
-    if (dHint) {
-      dHint.textContent = daily ? `${t('best')} ${daily.bestScore}` : utcDateKey()
-    }
+    this.levelSelect.applyLocale()
   }
 
   private applyShellAccent(themeId: string): void {
@@ -378,16 +417,24 @@ export class GameApp {
     this.run.setPlayfield(w, h)
   }
 
-  private startPlaying(modeId: GameModeId): void {
+  private openLevelSelect(): void {
+    const prog = this.save.getLevelProgress()
+    this.levelSelect.show(prog.unlocked, prog.cleared, prog.bests)
+  }
+
+  private startPlaying(level = 1): void {
     this.audio.unlock()
     void this.audio.resume()
-    this.activeMode = modeId
-    this.run.setMode(modeId)
+    this.activeMode = GameModeId.Classic
+    this.activeLevel = level
+    this.run.setMode(GameModeId.Classic)
+    this.run.setLevel(level)
     this.showMenu = false
     const menu = this.root.querySelector('[data-menu]') as HTMLElement
     menu.classList.add('hidden')
     this.settingsView.hide()
     this.leaderboardView.hide()
+    this.levelSelect.hide()
     this.result.hide()
     this.hud.setVisible(true)
     this.feedback.reset()
@@ -402,6 +449,7 @@ export class GameApp {
   private restartInstant(): void {
     this.audio.unlock()
     this.run.setMode(this.activeMode)
+    this.run.setLevel(this.activeLevel)
     this.result.hide()
     this.hud.setVisible(true)
     this.feedback.reset()
@@ -411,10 +459,19 @@ export class GameApp {
     this.run.tryBeginHold(this.time.now)
   }
 
+  private goNextLevel(): void {
+    if (this.activeLevel >= LEVEL_COUNT) {
+      this.goHome()
+      return
+    }
+    this.startPlaying(this.activeLevel + 1)
+  }
+
   /** Same seed — practice the run that just ended. */
   private replaySeed(): void {
     this.audio.unlock()
     this.run.setMode(this.activeMode)
+    this.run.setLevel(this.activeLevel)
     this.result.hide()
     this.hud.setVisible(true)
     this.feedback.reset()
@@ -428,17 +485,14 @@ export class GameApp {
   private goHome(): void {
     this.showMenu = true
     this.result.hide()
+    this.levelSelect.hide()
     this.hud.setVisible(false)
     this.feedback.reset()
     this.audio.stopBed()
     this.input.setEnabled(false)
     const menu = this.root.querySelector('[data-menu]') as HTMLElement
     menu.classList.remove('hidden')
-    const daily = this.save.getDaily()
-    const hint = this.root.querySelector('[data-daily-hint]')
-    if (hint) {
-      hint.textContent = daily ? `${t('best')} ${daily.bestScore}` : utcDateKey()
-    }
+    this.showModeHint()
     this.refreshThemeButtons()
     this.refreshSoundButtons()
   }
@@ -452,13 +506,40 @@ export class GameApp {
       modeId: payload.modeId,
       endReason: payload.endReason,
     })
+    let levelCleared = false
+    let nextLevelUnlocked = false
+    const toRecord = new Set(this.run.getClearedDuringRun())
+    const curDef = getLevelDef(payload.level)
+    if (payload.stats.score >= curDef.clearScore) {
+      toRecord.add(payload.level)
+    }
+    for (const lv of [...toRecord].sort((a, b) => a - b)) {
+      const def = getLevelDef(lv)
+      const r = this.save.recordLevelRun(lv, payload.stats.score, def.clearScore)
+      if (r.cleared) levelCleared = true
+      if (r.unlockedNext) nextLevelUnlocked = true
+    }
+    const peak = Math.min(LEVEL_COUNT, Math.max(payload.level, ...toRecord, 1))
+    const prog = this.save.getLevelProgress()
+    if (peak > prog.unlocked) {
+      this.save.applyLevelProgress({
+        ...prog,
+        unlocked: Math.min(LEVEL_COUNT, Math.max(prog.unlocked, peak)),
+      })
+      nextLevelUnlocked = true
+    }
+    this.activeLevel = payload.level
     if (payload.isNewBest) this.audio.playNewRecord()
     this.lastSeed = payload.seed
     this.hud.setVisible(false)
-    this.result.show(payload, unlocked)
+    this.result.show(
+      { ...payload, levelCleared, nextLevelUnlocked },
+      unlocked,
+    )
     this.input.setEnabled(true)
     this.refreshThemeButtons()
     this.refreshSoundButtons()
+    void this.pushCloudAfterRun(payload)
   }
 
   private loop = (): void => {
@@ -471,7 +552,7 @@ export class GameApp {
     const dt = this.time.tick()
     const now = this.time.now
 
-    if (this.settingsView.isVisible() || this.leaderboardView.isVisible()) {
+    if (this.settingsView.isVisible() || this.leaderboardView.isVisible() || this.levelSelect.isVisible()) {
       this.input.endFrame()
       this.feedback.update(dt)
       this.renderer.draw(this.run, this.feedback)

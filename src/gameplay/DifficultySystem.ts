@@ -47,6 +47,23 @@ export class DifficultySystem {
     }
   }
 
+  setSpeedRampMul(mul: number): void {
+    this.speedRampMul = Math.max(0.5, mul)
+  }
+
+  /** Inject extra success steps mid-run (score-based level up). */
+  injectSteps(count: number): { phaseChanged: boolean; phase: PhaseDefinition } {
+    const prevId = this.phase.id
+    const n = Math.max(0, Math.floor(count))
+    for (let i = 0; i < n; i++) {
+      this.applySuccessStep()
+    }
+    return {
+      phaseChanged: prevId !== this.phase.id,
+      phase: this.phase,
+    }
+  }
+
   getSpeed(): number {
     return this.speed
   }

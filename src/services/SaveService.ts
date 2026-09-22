@@ -2,8 +2,9 @@ import type { GameModeId } from '../data/GameModeConfig'
 import { utcDateKey } from '../data/GameModeConfig'
 import { themes, defaultThemeId } from '../data/ThemeConfig'
 import { soundPacks, defaultSoundPackId } from '../data/SoundPackConfig'
+import { LEVEL_COUNT } from '../data/LevelConfig'
 
-const STORAGE_KEY = 'one-more-save-v2'
+const STORAGE_KEY = 'one-more-save-v3'
 const LEADERBOARD_MAX = 10
 
 export interface ModeBest {
@@ -11,6 +12,17 @@ export interface ModeBest {
   bestCombo: number
   bestAccuracy: number
 }
+
+export interface LevelProgress {
+  /** Highest level unlocked (1–500) */
+  unlocked: number
+  cleared: number[]
+  /** Best score per level number */
+  bests: Record<number, number>
+}
+
+/** @deprecated alias */
+export type ModeLevelProgress = LevelProgress
 
 export interface DailyRecord {
   date: string
@@ -26,6 +38,7 @@ export interface LeaderboardEntry {
   modeId: GameModeId
   date: string
   seed: number
+  level?: number
 }
 
 export interface GameSettings {
@@ -36,7 +49,6 @@ export interface GameSettings {
   colorblindFriendly: boolean
   audioIndependent: boolean
   language: 'vi' | 'en'
-  /** Custom accent color (#rrggbb) — overrides theme accent when set */
   customAccent: string | null
 }
 
@@ -48,6 +60,7 @@ export interface SaveData {
   bestStreak: number
   lastPlayDate: string | null
   modeBests: Partial<Record<GameModeId, ModeBest>>
+  levelProgress: LevelProgress
   daily: DailyRecord | null
   achievements: string[]
   unlockedThemes: string[]
@@ -71,6 +84,12 @@ const emptyModeBest = (): ModeBest => ({
   bestAccuracy: 0,
 })
 
+const emptyLevelProgress = (): LevelProgress => ({
+  unlocked: 1,
+  cleared: [],
+  bests: {},
+})
+
 const defaultSave = (): SaveData => ({
   bestScore: 0,
   bestCombo: 0,
@@ -79,6 +98,7 @@ const defaultSave = (): SaveData => ({
   bestStreak: 0,
   lastPlayDate: null,
   modeBests: {},
+  levelProgress: emptyLevelProgress(),
   daily: null,
   achievements: [],
   unlockedThemes: Object.keys(themes),
@@ -104,6 +124,17 @@ function daysBetweenUtc(a: string, b: string): number {
   return Math.round((tb - ta) / 86_400_000)
 }
 
+function normalizeProgress(raw: Partial<LevelProgress> | undefined): LevelProgress {
+  if (!raw) return emptyLevelProgress()
+  return {
+    unlocked: Math.max(1, Math.min(LEVEL_COUNT, raw.unlocked || 1)),
+    cleared: Array.isArray(raw.cleared)
+      ? [...new Set(raw.cleared.filter((n) => n >= 1 && n <= LEVEL_COUNT))].sort((a, b) => a - b)
+      : [],
+    bests: { ...(raw.bests ?? {}) },
+  }
+}
+
 export class SaveService {
   private data: SaveData
   private storage: Storage | null = null
@@ -120,14 +151,101 @@ export class SaveService {
     return this.data.modeBests[modeId] ?? emptyModeBest()
   }
 
+  getLevelProgress(): LevelProgress {
+    return {
+      unlocked: this.data.levelProgress.unlocked,
+      cleared: [...this.data.levelProgress.cleared],
+      bests: { ...this.data.levelProgress.bests },
+    }
+  }
+
+  /** Compatibility for older cloud merge shape */
+  getAllModeLevels(): Partial<Record<GameModeId, LevelProgress>> {
+    return { classic: this.getLevelProgress() }
+  }
+
+  applyLevelProgress(progress: LevelProgress): void {
+    this.data.levelProgress = normalizeProgress(progress)
+    this.persist()
+  }
+
+  applyModeLevels(levels: Partial<Record<GameModeId, LevelProgress>>): void {
+    const classic = levels.classic
+    if (classic) this.applyLevelProgress(classic)
+  }
+
+  recordLevelRun(
+    level: number,
+    score: number,
+    clearScore: number,
+  ): { cleared: boolean; unlockedNext: boolean; unlocked: number } {
+    const prog = this.getLevelProgress()
+    const lv = Math.max(1, Math.min(LEVEL_COUNT, Math.floor(level)))
+    prog.bests[lv] = Math.max(prog.bests[lv] ?? 0, score)
+    let cleared = false
+    let unlockedNext = false
+    if (score >= clearScore && !prog.cleared.includes(lv)) {
+      prog.cleared.push(lv)
+      cleared = true
+    }
+    if (cleared && lv >= prog.unlocked && lv < LEVEL_COUNT) {
+      prog.unlocked = lv + 1
+      unlockedNext = true
+    }
+    const maxCleared = prog.cleared.reduce((a, b) => Math.max(a, b), 0)
+    prog.unlocked = Math.max(prog.unlocked, Math.min(LEVEL_COUNT, maxCleared + 1), 1)
+    this.data.levelProgress = prog
+    this.persist()
+    return { cleared, unlockedNext, unlocked: prog.unlocked }
+  }
+
   getDaily(): DailyRecord | null {
     const today = utcDateKey()
     if (this.data.daily && this.data.daily.date === today) return this.data.daily
     return null
   }
 
+  /** Sum of best scores across all levels — ranking metric. */
+  getTotalScore(): number {
+    let sum = 0
+    for (const v of Object.values(this.data.levelProgress.bests)) {
+      if (typeof v === 'number' && v > 0) sum += v
+    }
+    return sum
+  }
+
+  /** Level shown on leaderboards (highest unlocked). */
+  getStandingLevel(): number {
+    return this.data.levelProgress.unlocked
+  }
+
+  /**
+   * Local board: levels ranked by best score (high → low), labeled Level X.
+   * Falls back to legacy run list if no level bests yet.
+   */
   getLeaderboard(): LeaderboardEntry[] {
-    return this.data.leaderboard
+    const bests = this.data.levelProgress.bests
+    const fromLevels = Object.entries(bests)
+      .map(([k, score]) => {
+        const level = Number(k)
+        return {
+          score: score ?? 0,
+          maxCombo: 0,
+          modeId: 'classic' as GameModeId,
+          date: '',
+          seed: 0,
+          level,
+        }
+      })
+      .filter((e) => e.score > 0 && e.level >= 1)
+      .sort((a, b) => b.score - a.score || (b.level ?? 0) - (a.level ?? 0))
+      .slice(0, LEADERBOARD_MAX)
+
+    if (fromLevels.length > 0) return fromLevels
+
+    return [...this.data.leaderboard].sort(
+      (a, b) => b.score - a.score || (b.level ?? 0) - (a.level ?? 0),
+    )
   }
 
   hasAchievement(id: string): boolean {
@@ -186,6 +304,7 @@ export class SaveService {
     accuracy: number,
     modeId: GameModeId,
     seed = 0,
+    level = 1,
   ): RecordRunResult {
     const prevBest = this.data.bestScore
     this.data.totalRuns += 1
@@ -195,29 +314,10 @@ export class SaveService {
     if (maxCombo > this.data.bestCombo) this.data.bestCombo = maxCombo
 
     const prev = this.data.modeBests[modeId] ?? emptyModeBest()
-    const next: ModeBest = {
+    this.data.modeBests[modeId] = {
       bestScore: Math.max(prev.bestScore, score),
       bestCombo: Math.max(prev.bestCombo, maxCombo),
       bestAccuracy: Math.max(prev.bestAccuracy, accuracy),
-    }
-    this.data.modeBests[modeId] = next
-
-    if (modeId === 'daily') {
-      const today = utcDateKey()
-      const daily = this.data.daily?.date === today
-        ? this.data.daily
-        : {
-            date: today,
-            bestScore: 0,
-            bestCombo: 0,
-            bestAccuracy: 0,
-            attempts: 0,
-          }
-      daily.attempts += 1
-      daily.bestScore = Math.max(daily.bestScore, score)
-      daily.bestCombo = Math.max(daily.bestCombo, maxCombo)
-      daily.bestAccuracy = Math.max(daily.bestAccuracy, accuracy)
-      this.data.daily = daily
     }
 
     if (score > 0) {
@@ -227,15 +327,25 @@ export class SaveService {
         modeId,
         date: utcDateKey(),
         seed,
+        level,
       })
     }
 
     this.persist()
     return {
-      bestScore: next.bestScore,
-      bestCombo: next.bestCombo,
+      bestScore: this.data.modeBests[modeId]!.bestScore,
+      bestCombo: this.data.modeBests[modeId]!.bestCombo,
       isNewBest: score > prevBest,
       streak: this.data.streak,
+    }
+  }
+
+  /** Standing used for global ranking (total points + level). */
+  getStanding(): { totalScore: number; level: number; bestCombo: number } {
+    return {
+      totalScore: this.getTotalScore(),
+      level: this.getStandingLevel(),
+      bestCombo: this.data.bestCombo,
     }
   }
 
@@ -245,7 +355,7 @@ export class SaveService {
     if (!last) {
       this.data.streak = 1
     } else if (last === today) {
-      // same day — keep streak
+      // same day
     } else if (daysBetweenUtc(last, today) === 1) {
       this.data.streak += 1
     } else {
@@ -265,21 +375,35 @@ export class SaveService {
     this.storage = storage
     try {
       if (!storage) return defaultSave()
-      const raw = storage.getItem(STORAGE_KEY) ?? storage.getItem('one-more-save-v1')
+      const raw =
+        storage.getItem(STORAGE_KEY) ??
+        storage.getItem('one-more-save-v2') ??
+        storage.getItem('one-more-save-v1')
       if (!raw) return defaultSave()
-      const parsed = JSON.parse(raw) as Partial<SaveData>
+      const parsed = JSON.parse(raw) as Partial<SaveData> & {
+        modeLevels?: Partial<Record<string, LevelProgress>>
+      }
       const base = defaultSave()
-      // Always unlock every theme/sound pack so Settings UI is fully selectable
       const unlocked = Object.keys(themes)
       let active = parsed.activeTheme ?? defaultThemeId
       if (!unlocked.includes(active)) active = defaultThemeId
       const unlockedSounds = Object.keys(soundPacks)
       let activeSound = parsed.activeSound ?? defaultSoundPackId
       if (!unlockedSounds.includes(activeSound)) activeSound = defaultSoundPackId
+
+      let levelProgress = normalizeProgress(parsed.levelProgress)
+      if (
+        (!parsed.levelProgress || parsed.levelProgress.unlocked <= 1) &&
+        parsed.modeLevels?.classic
+      ) {
+        levelProgress = normalizeProgress(parsed.modeLevels.classic)
+      }
+
       return {
         ...base,
         ...parsed,
         modeBests: { ...parsed.modeBests },
+        levelProgress,
         achievements: Array.isArray(parsed.achievements) ? [...parsed.achievements] : [],
         unlockedThemes: unlocked,
         activeTheme: active,

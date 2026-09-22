@@ -1,13 +1,16 @@
 import type { RunEndedPayload } from '../gameplay/RunManager'
-import { t, modeLabel, earlyLateLabel, gradeLabel, unlockSummary } from '../data/Locale'
+import { LEVEL_COUNT } from '../data/LevelConfig'
+import { t, earlyLateLabel, gradeLabel, unlockSummary } from '../data/Locale'
 
 export class ResultView {
   private root: HTMLElement
   private onOneMore: (() => void) | null = null
   private onReplay: (() => void) | null = null
   private onHome: (() => void) | null = null
+  private onNextLevel: (() => void) | null = null
   private lastShareText = ''
   private lastSeed = 0
+  private pendingNextLevel = 0
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div')
@@ -15,6 +18,8 @@ export class ResultView {
     this.root.innerHTML = `
       <div class="result-panel">
         <div class="result-mode" data-mode></div>
+        <div class="result-level" data-level></div>
+        <div class="result-ask" data-ask></div>
         <div class="result-label" data-i18n="score">${t('score')}</div>
         <div class="result-score" data-score>0</div>
         <div class="result-meta">
@@ -26,6 +31,7 @@ export class ResultView {
         <div class="result-miss" data-miss></div>
         <div class="result-record" data-record></div>
         <div class="result-unlock" data-unlock></div>
+        <button type="button" class="btn-primary hidden" data-next-level>${t('goNextLevel')}</button>
         <button type="button" class="btn-primary" data-one-more>${t('oneMore')}</button>
         <button type="button" class="btn-ghost" data-replay>${t('replaySeed')}</button>
         <button type="button" class="btn-ghost" data-share>${t('share')}</button>
@@ -34,6 +40,10 @@ export class ResultView {
     `
     parent.appendChild(this.root)
 
+    this.root.querySelector('[data-next-level]')!.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.onNextLevel?.()
+    })
     this.root.querySelector('[data-one-more]')!.addEventListener('click', (e) => {
       e.stopPropagation()
       this.onOneMore?.()
@@ -65,18 +75,64 @@ export class ResultView {
     this.root.querySelector('[data-replay]')!.textContent = t('replaySeed')
     this.root.querySelector('[data-share]')!.textContent = t('share')
     this.root.querySelector('[data-home]')!.textContent = t('home')
+    if (this.pendingNextLevel > 0) {
+      this.root.querySelector('[data-next-level]')!.textContent =
+        `${t('goNextLevel')} ${this.pendingNextLevel}`
+    }
   }
 
-  setHandlers(oneMore: () => void, home: () => void, replay: () => void): void {
+  setHandlers(
+    oneMore: () => void,
+    home: () => void,
+    replay: () => void,
+    nextLevel?: () => void,
+  ): void {
     this.onOneMore = oneMore
     this.onHome = home
     this.onReplay = replay
+    this.onNextLevel = nextLevel ?? null
   }
 
   show(payload: RunEndedPayload, unlockedIds: string[] = []): void {
     this.applyLocale()
     this.lastSeed = payload.seed
-    this.root.querySelector('[data-mode]')!.textContent = modeLabel(payload.modeId)
+    const modeLine = `${t('level')} ${payload.level}`
+    this.root.querySelector('[data-mode]')!.textContent = modeLine
+    const levelEl = this.root.querySelector('[data-level]')!
+    const askEl = this.root.querySelector('[data-ask]')!
+    const nextBtn = this.root.querySelector('[data-next-level]') as HTMLElement
+    const oneMoreBtn = this.root.querySelector('[data-one-more]') as HTMLElement
+
+    const canOfferNext =
+      payload.levelCleared &&
+      payload.level < LEVEL_COUNT &&
+      (payload.nextLevelUnlocked || payload.endReason === 'complete')
+
+    this.pendingNextLevel = canOfferNext ? payload.level + 1 : 0
+
+    if (payload.levelCleared) {
+      levelEl.textContent = t('levelCleared')
+    } else if (payload.clearScore > 0) {
+      levelEl.textContent = `${payload.stats.score}/${payload.clearScore}`
+    } else {
+      levelEl.textContent = ''
+    }
+
+    if (canOfferNext) {
+      askEl.textContent = `${t('clearAsk')} ${this.pendingNextLevel}?`
+      nextBtn.classList.remove('hidden')
+      nextBtn.textContent = `${t('goNextLevel')} ${this.pendingNextLevel}`
+      oneMoreBtn.classList.remove('btn-primary')
+      oneMoreBtn.classList.add('btn-ghost')
+      oneMoreBtn.textContent = t('retryLevel')
+    } else {
+      askEl.textContent = ''
+      nextBtn.classList.add('hidden')
+      oneMoreBtn.classList.add('btn-primary')
+      oneMoreBtn.classList.remove('btn-ghost')
+      oneMoreBtn.textContent = t('oneMore')
+    }
+
     this.root.querySelector('[data-score]')!.textContent = String(payload.stats.score)
     this.root.querySelector('[data-best]')!.textContent = String(payload.bestScore)
     this.root.querySelector('[data-acc]')!.textContent =
@@ -85,8 +141,8 @@ export class ResultView {
     this.root.querySelector('[data-seed]')!.textContent = `${t('seed')} ${payload.seed}`
 
     const missEl = this.root.querySelector('[data-miss]')!
-    if (payload.endReason === 'complete') {
-      missEl.textContent = t('complete')
+    if (payload.endReason === 'complete' || payload.levelCleared) {
+      missEl.textContent = t('levelCleared')
     } else if (payload.endReason === 'imperfect') {
       missEl.textContent = gradeLabel(payload.judgement.grade)
     } else {
@@ -110,7 +166,7 @@ export class ResultView {
     unlockEl.textContent = unlockSummary(unlockedIds)
 
     this.lastShareText = [
-      `ONE MORE — ${modeLabel(payload.modeId)}`,
+      `ONE MORE — ${t('level')} ${payload.level}`,
       `${t('score')} ${payload.stats.score}`,
       `Combo ${payload.stats.maxCombo}`,
       `${t('accuracy')} ${Math.round(payload.accuracy * 100)}%`,

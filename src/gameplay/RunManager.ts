@@ -1,6 +1,12 @@
 import { EventBus, GameEvents } from '../core/EventBus'
 import type { GameModeConfig } from '../data/GameModeConfig'
 import { gameModes, GameModeId, isPerfectEnough, dailySeedFor } from '../data/GameModeConfig'
+import {
+  resolveLevelRun,
+  LEVEL_COUNT,
+  ballCountForLevel,
+  type ResolvedLevelRun,
+} from '../data/LevelConfig'
 import { Grade, RunPhase, EarlyLate, type Judgement, type RunStats } from '../core/types'
 import type { TimingConfig } from '../data/TimingConfig'
 import type { ScoreConfig } from '../data/ScoreConfig'
@@ -31,6 +37,10 @@ export interface RunEndedPayload {
   endReason: 'miss' | 'imperfect' | 'complete'
   isNewBest: boolean
   streak: number
+  level: number
+  clearScore: number
+  levelCleared: boolean
+  nextLevelUnlocked: boolean
 }
 
 export interface HudPayload {
@@ -44,6 +54,9 @@ export interface HudPayload {
   memoryActive: boolean
   /** Hide HUD during wow beat / celebration */
   wowHideUi: boolean
+  level: number
+  clearScore: number
+  ballCount: number
 }
 
 export interface FeedbackPayload {
@@ -56,14 +69,40 @@ export interface FeedbackPayload {
   wowComplete?: boolean
 }
 
+export interface BallLane {
+  object: ObjectController
+  target: TargetController
+  /** Fixed vertical offset from center rail */
+  laneY: number
+}
+
 export class RunManager {
   readonly timing: TimingSystem
   readonly score: ScoreSystem
   readonly combo: ComboSystem
   readonly difficulty: DifficultySystem
-  readonly object = new ObjectController()
-  readonly target = new TargetController()
   readonly wow = new WowMomentController()
+  private lanes: BallLane[] = [
+    { object: new ObjectController(), target: new TargetController(), laneY: 0 },
+  ]
+
+  /** Primary ball (lane 0) — kept for renderer / feedback compat */
+  get object(): ObjectController {
+    return this.lanes[0]!.object
+  }
+
+  /** Primary target (lane 0) */
+  get target(): TargetController {
+    return this.lanes[0]!.target
+  }
+
+  getLanes(): readonly BallLane[] {
+    return this.lanes
+  }
+
+  getBallCount(): number {
+    return this.lanes.length
+  }
 
   phase: RunPhase = RunPhase.Idle
   private readonly bus: EventBus
@@ -85,6 +124,11 @@ export class RunManager {
   private chainRemaining = 0
   private showTimingGhost = true
   private mode: GameModeConfig = gameModes[GameModeId.Classic]
+  private level = 1
+  private clearScore = 0
+  private levelRun: ResolvedLevelRun = resolveLevelRun(1)
+  /** Levels cleared mid-run by crossing score thresholds */
+  private clearedDuringRun: number[] = []
   private onBestUpdate:
     | ((
         score: number,
@@ -140,6 +184,34 @@ export class RunManager {
     this.mode = gameModes[modeId]
   }
 
+  setLevel(level: number): void {
+    this.level = Math.max(1, Math.min(LEVEL_COUNT, Math.floor(level)))
+  }
+
+  getLevel(): number {
+    return this.level
+  }
+
+  getClearScore(): number {
+    return this.clearScore
+  }
+
+  getClearedDuringRun(): number[] {
+    return [...this.clearedDuringRun]
+  }
+
+  private applyResolvedLevel(resolved: ResolvedLevelRun, bootstrap: boolean): void {
+    this.levelRun = resolved
+    this.level = resolved.level
+    this.clearScore = resolved.clearScore
+    this.score.setScoreMul(resolved.scoreMul)
+    if (bootstrap) {
+      this.difficulty.bootstrap(resolved.startSuccesses, resolved.speedRampMul)
+    } else {
+      this.difficulty.setSpeedRampMul(resolved.speedRampMul)
+    }
+  }
+
   setBestUpdater(
     fn: (
       score: number,
@@ -172,7 +244,8 @@ export class RunManager {
     this.score.reset()
     this.combo.reset()
     this.difficulty.reset()
-    this.difficulty.bootstrap(this.mode.startSuccesses, this.mode.speedRampMul)
+    this.clearedDuringRun = []
+    this.applyResolvedLevel(resolveLevelRun(this.level), true)
     this.hits = 0
     this.perfects = 0
     this.ultras = 0
@@ -196,7 +269,7 @@ export class RunManager {
     const action = this.input.getAction(InputAction.Primary)
     if (!action.pressed) return
     this.holdStartMs = nowMs
-    this.object.startMoving()
+    for (const lane of this.lanes) lane.object.startMoving()
     this.phase = RunPhase.Holding
     this.bus.emit(GameEvents.HoldStarted, {
       wow: this.wow.isActive(),
@@ -207,7 +280,7 @@ export class RunManager {
 
   private buildContext(): PatternContext {
     const cfg = this.difficulty.getConfig()
-    const mode = this.mode
+    const lv = this.levelRun
     return {
       playWidth: this.playWidth,
       playHeight: this.playHeight,
@@ -217,17 +290,17 @@ export class RunManager {
       minReactionSec: cfg.minReactionSec,
       maxAmpFrac: cfg.maxMotionAmpFrac,
       minFakeGapNorm: cfg.minFakeGapNorm,
-      allowMoving: this.difficulty.allowsMovingTarget() || !!mode.unlockMoving,
-      allowFake: this.difficulty.allowsFakeTargets() || !!mode.unlockFake,
-      allowReverse: this.difficulty.allowsReverse() || !!mode.unlockReverse,
-      allowChain: this.difficulty.allowsChain() || !!mode.unlockChain,
-      allowMemory: this.difficulty.allowsMemory() || !!mode.unlockMemory,
-      chaosMix: this.difficulty.isChaosMix(),
+      allowMoving: this.difficulty.allowsMovingTarget() || lv.unlockMoving,
+      allowFake: this.difficulty.allowsFakeTargets() || lv.unlockFake,
+      allowReverse: this.difficulty.allowsReverse() || lv.unlockReverse,
+      allowChain: this.difficulty.allowsChain() || lv.unlockChain,
+      allowMemory: this.difficulty.allowsMemory() || lv.unlockMemory,
+      chaosMix: this.difficulty.isChaosMix() || lv.chaosMix,
       masterPressure: this.difficulty.isMasterPressure(),
-      reverseBias: mode.bias?.reverse,
-      movingBias: mode.bias?.moving,
-      memoryBias: mode.bias?.memory,
-      fakeBias: mode.bias?.fake,
+      reverseBias: lv.reverseBias,
+      movingBias: lv.movingBias,
+      memoryBias: lv.memoryBias,
+      fakeBias: lv.fakeBias,
     }
   }
 
@@ -273,30 +346,64 @@ export class RunManager {
     }
   }
 
+  private ensureBallLanes(count: number): void {
+    const n = Math.max(1, Math.min(6, count))
+    while (this.lanes.length < n) {
+      this.lanes.push({
+        object: new ObjectController(),
+        target: new TargetController(),
+        laneY: 0,
+      })
+    }
+    if (this.lanes.length > n) this.lanes.length = n
+  }
+
   private applyCurrentPattern(): void {
     const pattern = this.currentPattern
     if (!pattern) return
 
-    this.beatSpeed = this.difficulty.getSpeed() * pattern.speedMul
-    const width = this.difficulty.getTargetWidth() * pattern.targetWidthMul
-    const baseX = this.playWidth * pattern.targetXNorm
+    const ballCount = ballCountForLevel(this.level)
+    this.ensureBallLanes(ballCount)
 
-    this.target.applyPattern(baseX, width, pattern, this.playWidth)
-    // Wow beat: hide immediately (telegraph 0); normal memory uses config telegraph
-    if (this.wow.isActive()) {
-      this.target.setMemory(true, 0.05)
-    } else {
-      this.target.setMemory(
-        pattern.memory,
-        this.difficulty.getMemoryTelegraphSec(),
-      )
-    }
+    this.beatSpeed = this.difficulty.getSpeed() * pattern.speedMul
+    const widthScale = Math.max(0.72, 1 - (ballCount - 1) * 0.05)
+    const width = this.difficulty.getTargetWidth() * pattern.targetWidthMul * widthScale
+    const baseX = this.playWidth * pattern.targetXNorm
+    const mid = (ballCount - 1) / 2
+    const laneGap = Math.min(52, (this.playHeight * 0.32) / Math.max(1, ballCount))
+    // Target X stagger → one release must satisfy all lanes
+    const xStagger = ballCount > 1 ? 10 + (ballCount - 2) * 2 : 0
 
     const startX =
       pattern.direction === 1
         ? this.difficulty.getObjectStartX()
         : this.playWidth - this.difficulty.getObjectStartX()
-    this.object.reset(startX, pattern.direction)
+
+    for (let i = 0; i < ballCount; i++) {
+      const lane = this.lanes[i]!
+      lane.laneY = (i - mid) * laneGap
+      const targetX = baseX + (i - mid) * xStagger
+      const lanePattern =
+        i === 0
+          ? pattern
+          : {
+              ...pattern,
+              fakes: [] as typeof pattern.fakes,
+              memory: false,
+              motion: { ...pattern.motion, phase: pattern.motion.phase + i * 0.35 },
+            }
+      lane.target.applyPattern(targetX, width, lanePattern, this.playWidth)
+      if (i === 0) {
+        if (this.wow.isActive()) {
+          lane.target.setMemory(true, 0.05)
+        } else {
+          lane.target.setMemory(pattern.memory, this.difficulty.getMemoryTelegraphSec())
+        }
+      } else {
+        lane.target.setMemory(false, 0)
+      }
+      lane.object.reset(startX, pattern.direction)
+    }
   }
 
   update(dt: number, nowMs: number): void {
@@ -318,14 +425,16 @@ export class RunManager {
       return
     }
 
-    this.target.update(dt)
-    this.target.updateMemory(dt)
+    for (const lane of this.lanes) {
+      lane.target.update(dt)
+      lane.target.updateMemory(dt)
+    }
 
     const action = this.input.getAction(InputAction.Primary)
 
     if (this.phase === RunPhase.Idle && action.justPressed) {
       this.holdStartMs = nowMs
-      this.object.startMoving()
+      for (const lane of this.lanes) lane.object.startMoving()
       this.phase = RunPhase.Holding
       this.bus.emit(GameEvents.HoldStarted, {
         wow: this.wow.isActive(),
@@ -335,16 +444,22 @@ export class RunManager {
     }
 
     if (this.phase === RunPhase.Holding) {
-      this.object.update(dt, this.beatSpeed)
+      for (const lane of this.lanes) {
+        lane.object.update(dt, this.beatSpeed)
+      }
 
-      const deltaMs = deltaMsFromPosition(
-        this.object.x,
-        this.target.x,
-        this.beatSpeed,
-        this.object.getDirection(),
-      )
+      let maxPastMs = -Infinity
+      for (const lane of this.lanes) {
+        const deltaMs = deltaMsFromPosition(
+          lane.object.x,
+          lane.target.x,
+          this.beatSpeed,
+          lane.object.getDirection(),
+        )
+        if (deltaMs > maxPastMs) maxPastMs = deltaMs
+      }
 
-      if (deltaMs > this.difficulty.getAutoMissPastMs()) {
+      if (maxPastMs > this.difficulty.getAutoMissPastMs()) {
         this.resolveRelease(nowMs, true)
       } else if (action.justReleased) {
         this.resolveRelease(nowMs, false)
@@ -364,7 +479,7 @@ export class RunManager {
     const holdMs =
       this.holdStartMs !== null ? nowMs - this.holdStartMs : 0
 
-    this.object.stopMoving()
+    for (const lane of this.lanes) lane.object.stopMoving()
 
     if (!autoMiss && !this.timing.isHoldLongEnough(holdMs)) {
       this.bus.emit(GameEvents.HoldCancelled, null)
@@ -375,12 +490,23 @@ export class RunManager {
       return
     }
 
-    const judgement = this.timing.judgePosition(
+    // Worst timing across all balls decides the grade (multi-ball = tighter window)
+    let judgement = this.timing.judgePosition(
       this.object.x,
       this.target.x,
       this.beatSpeed,
       this.object.getDirection(),
     )
+    for (let i = 1; i < this.lanes.length; i++) {
+      const lane = this.lanes[i]!
+      const j = this.timing.judgePosition(
+        lane.object.x,
+        lane.target.x,
+        this.beatSpeed,
+        lane.object.getDirection(),
+      )
+      if (j.absDeltaMs > judgement.absDeltaMs) judgement = j
+    }
 
     if (judgement.grade === Grade.Miss) {
       if (!autoMiss && this.target.isNearFake(this.object.x)) {
@@ -390,7 +516,7 @@ export class RunManager {
       return
     }
 
-    if (this.mode.perfectOnly && !isPerfectEnough(judgement.grade)) {
+    if (this.levelRun.perfectOnly && !isPerfectEnough(judgement.grade)) {
       this.handleMiss(judgement, 'imperfect')
       return
     }
@@ -418,7 +544,7 @@ export class RunManager {
       pointsGained: points,
       combo,
       worldX: this.object.x,
-      worldY: railY + this.target.yOffset,
+      worldY: railY + this.target.yOffset + this.lanes[0]!.laneY,
       wowComplete,
     }
     this.bus.emit(GameEvents.Judged, judgement)
@@ -428,14 +554,26 @@ export class RunManager {
       this.bus.emit(GameEvents.PhaseChanged, phase)
     }
 
+    // Enough score → clear this level and stop so the player can choose next
+    if (this.score.getScore() >= this.clearScore) {
+      if (!this.clearedDuringRun.includes(this.level)) {
+        this.clearedDuringRun.push(this.level)
+      }
+      this.bus.emit(GameEvents.LevelUp, {
+        level: Math.min(LEVEL_COUNT, this.level + 1),
+        from: this.level,
+        score: this.score.getScore(),
+      })
+      this.endRun(judgement, 'complete')
+      return
+    }
+
     if (wowComplete) {
       this.wow.celebrate(1.5)
       this.bus.emit(GameEvents.WowComplete, { combo })
       this.input.setEnabled(false)
-      // Resume after celebration via update → then continue run
       this.phase = RunPhase.Idle
       this.holdStartMs = null
-      // Defer next beat until celebration ends
       this.schedulePostWowContinue()
       this.emitHud('')
       return
@@ -541,6 +679,10 @@ export class RunManager {
       endReason,
       isNewBest: best.isNewBest === true,
       streak: best.streak ?? 0,
+      level: this.level,
+      clearScore: this.clearScore,
+      levelCleared: false,
+      nextLevelUnlocked: false,
     }
     this.bus.emit(GameEvents.RunEnded, ended)
   }
@@ -587,6 +729,9 @@ export class RunManager {
       chainTotal: this.chainTotal,
       memoryActive: this.currentPattern?.memory === true,
       wowHideUi: this.wow.isActive() || this.wow.isCelebrating() || this.wow.isArmed(),
+      level: this.level,
+      clearScore: this.clearScore,
+      ballCount: this.lanes.length,
     }
     this.bus.emit(GameEvents.HudUpdated, payload)
   }

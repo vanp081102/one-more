@@ -9,6 +9,7 @@ export class HudView {
   private hintEl: HTMLElement
   private phaseEl: HTMLElement
   private chainEl: HTMLElement
+  private levelEl: HTMLElement
   private backBtn: HTMLButtonElement
   private lastScore = -1
   private teachUntil = 0
@@ -19,6 +20,7 @@ export class HudView {
     this.root.className = 'hud'
     this.root.innerHTML = `
       <button type="button" class="hud-back" data-back>${t('back')}</button>
+      <div class="hud-level" data-level></div>
       <div class="hud-phase" data-phase></div>
       <div class="hud-score" data-score>0</div>
       <div class="hud-combo" data-combo></div>
@@ -31,6 +33,7 @@ export class HudView {
     this.hintEl = this.root.querySelector('[data-hint]')!
     this.phaseEl = this.root.querySelector('[data-phase]')!
     this.chainEl = this.root.querySelector('[data-chain]')!
+    this.levelEl = this.root.querySelector('[data-level]')!
     this.backBtn = this.root.querySelector('[data-back]') as HTMLButtonElement
 
     this.backBtn.addEventListener('click', (e) => {
@@ -72,6 +75,16 @@ export class HudView {
       this.lastScore = payload.score
     }
     this.scoreEl.textContent = String(payload.score)
+
+    if (payload.level > 0) {
+      const balls =
+        payload.ballCount > 1 ? ` · ×${payload.ballCount}` : ''
+      this.levelEl.textContent = `${t('level')} ${payload.level}${balls} · ${payload.score}/${payload.clearScore}`
+      this.levelEl.classList.add('visible')
+    } else {
+      this.levelEl.textContent = ''
+      this.levelEl.classList.remove('visible')
+    }
 
     const milestone = milestoneForCombo(payload.combo)
     if (payload.combo > 1) {

@@ -93,7 +93,7 @@ describe('QA — score & combo', () => {
   it('high combo uses max multiplier', () => {
     const s = new ScoreSystem(defaultScoreConfig)
     expect(s.getMultiplier(250)).toBe(5)
-    expect(s.applyHit(Grade.Ultra, 250)).toBe(5000)
+    expect(s.applyHit(Grade.Ultra, 250)).toBe(2000)
   })
 
   it('combo resets on miss', () => {
@@ -246,9 +246,7 @@ describe('QA — focus / pause', () => {
     expect(d).toBeLessThanOrEqual(0.05)
   })
 
-  it('daily mode id exists for leaderboard', () => {
-    expect(GameModeId.Daily).toBe('daily')
-    expect(GameModeId.Chaos).toBe('chaos')
-    expect(GameModeId.Endless).toBe('endless')
+  it('classic mode id exists for leaderboard', () => {
+    expect(GameModeId.Classic).toBe('classic')
   })
 })

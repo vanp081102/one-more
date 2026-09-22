@@ -65,9 +65,26 @@ Unlock themes and sound packs (DEFAULT / CRYSTAL / SOFT / PUNCH) via achievement
 | Mouse / Touch | Hold |
 | Gamepad | A / Cross · X · RT |
 
+## Cloud (optional) — login + global ranks + synced levels
+
+Online features use **Firebase Auth + Firestore**. Without config the game still works fully offline.
+
+1. Create a Firebase project → enable **Google** and **Anonymous** sign-in.
+2. Create a web app; copy config into `.env.local` (see `.env.example`).
+3. Deploy `firestore.rules` from this repo.
+4. Auth → Settings → Authorized domains → add `localhost` and `vanp081102.github.io`.
+
+```bash
+cp .env.example .env.local
+# fill VITE_FIREBASE_* then:
+npm run dev
+```
+
+In **Scores**: Local / Global / Levels tabs, Google or Guest login. Cleared levels sync to your account; scores post to the global board when signed in.
+
 ## Stack
 
-Vite · TypeScript · Canvas 2D · Web Audio · localStorage · Vitest
+Vite · TypeScript · Canvas 2D · Web Audio · localStorage · Firebase (optional) · Vitest
 
 No gameplay power-ups. Cosmetics only (themes / achievements).
 

@@ -40,4 +40,5 @@ export const GameEvents = {
   WowBeat: 'wow_beat',
   WowComplete: 'wow_complete',
   AchievementsUnlocked: 'achievements_unlocked',
+  LevelUp: 'level_up',
 } as const

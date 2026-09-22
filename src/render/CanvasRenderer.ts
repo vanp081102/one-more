@@ -139,33 +139,39 @@ export class CanvasRenderer {
     ctx.translate(shake.offsetX, shake.offsetY)
 
     const railY = height * 0.5
-
-    ctx.strokeStyle = theme.rail
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.moveTo(24, railY)
-    ctx.lineTo(width - 24, railY)
-    ctx.stroke()
-
-    const t = run.target
-    const targetY = railY + t.yOffset
+    const lanes = run.getLanes()
+    const primary = lanes[0]!
     const tf = feedback.getTargetFlash()
 
-    // Direction telegraph (arrow on rail)
-    const dir = run.object.getDirection()
+    // Rails per lane
+    for (const lane of lanes) {
+      const y = railY + lane.laneY
+      ctx.strokeStyle = theme.rail
+      ctx.globalAlpha = lanes.length > 1 ? 0.55 : 1
+      ctx.lineWidth = lanes.length > 1 ? 1.5 : 2
+      ctx.beginPath()
+      ctx.moveTo(24, y)
+      ctx.lineTo(width - 24, y)
+      ctx.stroke()
+      ctx.globalAlpha = 1
+    }
+
+    // Direction telegraph (arrow on primary rail)
+    const dir = primary.object.getDirection()
     if (run.phase === RunPhase.Idle || run.phase === RunPhase.Holding) {
       ctx.fillStyle = dir === -1 ? 'rgba(200, 160, 255, 0.55)' : 'rgba(255,255,255,0.2)'
       const ax = dir === 1 ? 36 : width - 36
-      drawChevron(ctx, ax, railY, dir)
+      drawChevron(ctx, ax, railY + primary.laneY, dir)
     }
 
     // Skip targets/fakes during wow beat (audio-only) unless timing ghost is on
     const hideTargets = run.wow.isActive() && !run.showsTimingGhost()
 
     if (!hideTargets) {
-      // Fake targets first — dashed outline + X (shape, not color-only)
-      for (const fake of t.fakes) {
-        const fy = railY + fake.yOffset
+      // Fake targets on primary lane only
+      const t0 = primary.target
+      for (const fake of t0.fakes) {
+        const fy = railY + primary.laneY + fake.yOffset
         const fl = fake.x - fake.width / 2
         ctx.save()
         ctx.setLineDash([6, 5])
@@ -174,7 +180,6 @@ export class CanvasRenderer {
         roundRect(ctx, fl, fy - 36, fake.width, 72, 8)
         ctx.stroke()
         ctx.setLineDash([])
-        // Hatch fill — shape cue for colorblind
         if (this.colorblind) {
           ctx.save()
           ctx.beginPath()
@@ -202,143 +207,149 @@ export class CanvasRenderer {
         ctx.restore()
       }
 
-      const memVisible = !t.isMemoryMode() || t.isMemoryVisible()
-      const showGhost = memVisible || run.showsTimingGhost()
+      for (const lane of lanes) {
+        const t = lane.target
+        const targetY = railY + lane.laneY + t.yOffset
+        const memVisible = !t.isMemoryMode() || t.isMemoryVisible()
+        const showGhost = memVisible || run.showsTimingGhost()
 
-      if (t.isMoving() && showGhost && !this.reducedMotion) {
-        this.ghostTrail.push({ x: t.x, y: targetY, life: 0.35 })
-        if (this.ghostTrail.length > 18) this.ghostTrail.shift()
-        for (const g of this.ghostTrail) {
-          g.life -= 0.016
-          if (g.life <= 0) continue
-          ctx.globalAlpha = g.life * (memVisible ? 0.35 : 0.12)
-          ctx.strokeStyle = theme.accent
-          ctx.lineWidth = 1
-          roundRect(ctx, g.x - t.width / 2, g.y - 36, t.width, 72, 8)
-          ctx.stroke()
+        if (lane === primary && t.isMoving() && showGhost && !this.reducedMotion) {
+          this.ghostTrail.push({ x: t.x, y: targetY, life: 0.35 })
+          if (this.ghostTrail.length > 18) this.ghostTrail.shift()
+          for (const g of this.ghostTrail) {
+            g.life -= 0.016
+            if (g.life <= 0) continue
+            ctx.globalAlpha = g.life * (memVisible ? 0.35 : 0.12)
+            ctx.strokeStyle = theme.accent
+            ctx.lineWidth = 1
+            roundRect(ctx, g.x - t.width / 2, g.y - 36, t.width, 72, 8)
+            ctx.stroke()
+          }
+          this.ghostTrail = this.ghostTrail.filter((g) => g.life > 0)
+          ctx.globalAlpha = 1
+
+          if (memVisible) {
+            ctx.fillStyle = theme.accent
+            ctx.globalAlpha = 0.35
+            ctx.beginPath()
+            ctx.arc(t.x, targetY, 3, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.globalAlpha = 1
+          }
+        } else if (lane === primary && !t.isMoving()) {
+          this.ghostTrail.length = 0
         }
-        this.ghostTrail = this.ghostTrail.filter((g) => g.life > 0)
-        ctx.globalAlpha = 1
 
         if (memVisible) {
-          ctx.fillStyle = theme.accent
-          ctx.globalAlpha = 0.35
-          ctx.beginPath()
-          ctx.arc(t.x, targetY, 3, 0, Math.PI * 2)
+          ctx.fillStyle = theme.targetFill
+          ctx.globalAlpha = Math.min(1, 0.55 + tf * 0.45)
+          ctx.strokeStyle =
+            phaseId >= DifficultyPhaseId.Master
+              ? 'rgba(255,255,255,0.95)'
+              : phaseId >= DifficultyPhaseId.Chaos
+                ? 'rgba(255, 120, 160, 0.95)'
+                : phaseId >= DifficultyPhaseId.Memory
+                  ? 'rgba(180, 220, 255, 0.95)'
+                  : phaseId >= DifficultyPhaseId.MultiStage
+                    ? 'rgba(160, 255, 200, 0.95)'
+                    : phaseId >= DifficultyPhaseId.Reversal
+                      ? 'rgba(200, 160, 255, 0.95)'
+                      : phaseId >= DifficultyPhaseId.Fake
+                        ? 'rgba(255, 210, 120, 0.95)'
+                        : phaseId >= DifficultyPhaseId.Moving
+                          ? 'rgba(255, 210, 120, 0.9)'
+                          : phaseId >= DifficultyPhaseId.Precision
+                            ? 'rgba(125, 200, 255, 0.9)'
+                            : theme.targetStroke
+          ctx.lineWidth = 2 + tf * 2
+          roundRect(ctx, t.left, targetY - 36, t.width, 72, 8)
           ctx.fill()
+          ctx.stroke()
+          ctx.globalAlpha = 1
+
+          ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+          ctx.lineWidth = 2
+          const tick = 8
+          ctx.beginPath()
+          ctx.moveTo(t.left, targetY - 36 + tick)
+          ctx.lineTo(t.left, targetY - 36)
+          ctx.lineTo(t.left + tick, targetY - 36)
+          ctx.moveTo(t.right, targetY - 36 + tick)
+          ctx.lineTo(t.right, targetY - 36)
+          ctx.lineTo(t.right - tick, targetY - 36)
+          ctx.stroke()
+
+          if (phaseId >= DifficultyPhaseId.Precision) {
+            const inner = Math.max(8, t.width * 0.28)
+            ctx.strokeStyle = 'rgba(255,255,255,0.35)'
+            ctx.lineWidth = 1
+            roundRect(ctx, t.x - inner / 2, targetY - 20, inner, 40, 4)
+            ctx.stroke()
+          }
+
+          ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(t.x, targetY - 28)
+          ctx.lineTo(t.x, targetY + 28)
+          ctx.stroke()
+        } else if (run.showsTimingGhost()) {
+          ctx.save()
+          ctx.globalAlpha = 0.18
+          ctx.setLineDash([4, 6])
+          ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+          ctx.lineWidth = 1.5
+          roundRect(ctx, t.left, targetY - 36, t.width, 72, 8)
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.beginPath()
+          ctx.moveTo(t.x, targetY - 16)
+          ctx.lineTo(t.x, targetY + 16)
+          ctx.stroke()
+          ctx.restore()
+        } else if (lane === primary) {
+          ctx.globalAlpha = 0.12
+          ctx.fillStyle = '#fff'
+          ctx.fillRect(t.x - 1, targetY - 6, 2, 12)
           ctx.globalAlpha = 1
         }
-      } else if (!t.isMoving()) {
-        this.ghostTrail.length = 0
-      }
-
-      if (memVisible) {
-        ctx.fillStyle = theme.targetFill
-        ctx.globalAlpha = Math.min(1, 0.55 + tf * 0.45)
-        ctx.strokeStyle =
-          phaseId >= DifficultyPhaseId.Master
-            ? 'rgba(255,255,255,0.95)'
-            : phaseId >= DifficultyPhaseId.Chaos
-              ? 'rgba(255, 120, 160, 0.95)'
-              : phaseId >= DifficultyPhaseId.Memory
-                ? 'rgba(180, 220, 255, 0.95)'
-                : phaseId >= DifficultyPhaseId.MultiStage
-                  ? 'rgba(160, 255, 200, 0.95)'
-                  : phaseId >= DifficultyPhaseId.Reversal
-                    ? 'rgba(200, 160, 255, 0.95)'
-                    : phaseId >= DifficultyPhaseId.Fake
-                      ? 'rgba(255, 210, 120, 0.95)'
-                      : phaseId >= DifficultyPhaseId.Moving
-                        ? 'rgba(255, 210, 120, 0.9)'
-                        : phaseId >= DifficultyPhaseId.Precision
-                          ? 'rgba(125, 200, 255, 0.9)'
-                          : theme.targetStroke
-        ctx.lineWidth = 2 + tf * 2
-        roundRect(ctx, t.left, targetY - 36, t.width, 72, 8)
-        ctx.fill()
-        ctx.stroke()
-        ctx.globalAlpha = 1
-
-        ctx.strokeStyle = 'rgba(255,255,255,0.7)'
-        ctx.lineWidth = 2
-        const tick = 8
-        ctx.beginPath()
-        ctx.moveTo(t.left, targetY - 36 + tick)
-        ctx.lineTo(t.left, targetY - 36)
-        ctx.lineTo(t.left + tick, targetY - 36)
-        ctx.moveTo(t.right, targetY - 36 + tick)
-        ctx.lineTo(t.right, targetY - 36)
-        ctx.lineTo(t.right - tick, targetY - 36)
-        ctx.stroke()
-
-        if (phaseId >= DifficultyPhaseId.Precision) {
-          const inner = Math.max(8, t.width * 0.28)
-          ctx.strokeStyle = 'rgba(255,255,255,0.35)'
-          ctx.lineWidth = 1
-          roundRect(ctx, t.x - inner / 2, targetY - 20, inner, 40, 4)
-          ctx.stroke()
-        }
-
-        ctx.strokeStyle = 'rgba(255,255,255,0.55)'
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(t.x, targetY - 28)
-        ctx.lineTo(t.x, targetY + 28)
-        ctx.stroke()
-      } else if (run.showsTimingGhost()) {
-        ctx.save()
-        ctx.globalAlpha = 0.18
-        ctx.setLineDash([4, 6])
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-        ctx.lineWidth = 1.5
-        roundRect(ctx, t.left, targetY - 36, t.width, 72, 8)
-        ctx.stroke()
-        ctx.setLineDash([])
-        ctx.beginPath()
-        ctx.moveTo(t.x, targetY - 16)
-        ctx.lineTo(t.x, targetY + 16)
-        ctx.stroke()
-        ctx.restore()
-      } else {
-        ctx.globalAlpha = 0.12
-        ctx.fillStyle = '#fff'
-        ctx.fillRect(t.x - 1, targetY - 6, 2, 12)
-        ctx.globalAlpha = 1
       }
     } else {
       this.ghostTrail.length = 0
     }
 
-    // Object — dim during wow active
+    // Objects (balls)
     const pulse = 1 + feedback.getObjectPulse() * 0.5
     const squash = feedback.getSquash()
-    const baseR = run.object.radius * pulse
-    const objY = railY
     const celebrate = feedback.getCelebrate()
-    ctx.save()
-    ctx.translate(run.object.x, objY)
-    ctx.scale(squash.x, squash.y)
-    ctx.globalAlpha = hideTargets ? 0.25 : 1
-    ctx.fillStyle = theme.object
-    ctx.beginPath()
-    ctx.arc(0, 0, baseR, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)'
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.restore()
-
-    if (run.object.isMoving() && !hideTargets) {
-      const moveDir = run.object.getDirection()
-      const trailLen = 20 + run.difficulty.getSpeed() * 0.04
-      ctx.strokeStyle = theme.object
-      ctx.globalAlpha = 0.28
-      ctx.lineWidth = 3
+    for (const lane of lanes) {
+      const baseR = lane.object.radius * pulse * (lanes.length > 3 ? 0.88 : 1)
+      const objY = railY + lane.laneY
+      ctx.save()
+      ctx.translate(lane.object.x, objY)
+      ctx.scale(squash.x, squash.y)
+      ctx.globalAlpha = hideTargets ? 0.25 : 1
+      ctx.fillStyle = theme.object
       ctx.beginPath()
-      ctx.moveTo(run.object.x - trailLen * moveDir, objY)
-      ctx.lineTo(run.object.x - 6 * moveDir, objY)
+      ctx.arc(0, 0, baseR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+      ctx.lineWidth = 2
       ctx.stroke()
-      ctx.globalAlpha = 1
+      ctx.restore()
+
+      if (lane.object.isMoving() && !hideTargets) {
+        const moveDir = lane.object.getDirection()
+        const trailLen = 20 + run.difficulty.getSpeed() * 0.04
+        ctx.strokeStyle = theme.object
+        ctx.globalAlpha = 0.28
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.moveTo(lane.object.x - trailLen * moveDir, objY)
+        ctx.lineTo(lane.object.x - 6 * moveDir, objY)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+      }
     }
 
     const ring = feedback.getRing()

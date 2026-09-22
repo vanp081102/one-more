@@ -177,6 +177,19 @@ export class FeedbackSystem {
         }
       }),
     )
+    this.unsub.push(
+      this.bus.on<{ level: number; from: number }>(GameEvents.LevelUp, (p) => {
+        this.audio.playMilestone()
+        this.milestoneFlash = {
+          text: `${t('level')} ${p.level}`,
+          life: 0.9,
+          maxLife: 0.9,
+          color: '#7dffb3',
+          scale: 1.55,
+        }
+        if (!this.reducedMotion) this.shake.add(0.3)
+      }),
+    )
   }
 
   stop(): void {

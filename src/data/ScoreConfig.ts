@@ -10,10 +10,10 @@ export interface ScoreConfig {
 }
 
 export const defaultScoreConfig: ScoreConfig = {
-  good: 100,
-  great: 250,
-  perfect: 500,
-  ultra: 1000,
+  good: 40,
+  great: 100,
+  perfect: 200,
+  ultra: 400,
   comboTierAt: [0, 10, 25, 50, 100],
   comboMultipliers: [1, 2, 3, 4, 5],
 }

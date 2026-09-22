@@ -36,10 +36,13 @@ export class MetaProgress {
       { id: 'combo_25', ok: stats.maxCombo >= 25 || data.bestCombo >= 25 },
       { id: 'combo_100', ok: stats.maxCombo >= 100 || data.bestCombo >= 100 },
       { id: 'score_5000', ok: stats.score >= 5000 || data.bestScore >= 5000 },
-      { id: 'daily_clear', ok: stats.modeId === 'daily' },
+      {
+        id: 'daily_clear',
+        ok: data.levelProgress.cleared.length >= 10 || data.levelProgress.unlocked >= 15,
+      },
       {
         id: 'zen_complete',
-        ok: stats.modeId === 'zen' && stats.endReason === 'complete',
+        ok: data.levelProgress.unlocked >= 30 || data.levelProgress.cleared.includes(25),
       },
     ]
 
