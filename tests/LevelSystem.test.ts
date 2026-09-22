@@ -34,8 +34,11 @@ function memoryStorage(): Storage {
 }
 
 describe('LevelConfig 1–500', () => {
-  it('defines 500 levels with rising clear scores', () => {
+  it('defines 500 levels with clearScore = level × 100', () => {
     expect(LEVEL_COUNT).toBe(500)
+    expect(getLevelDef(1).clearScore).toBe(100)
+    expect(getLevelDef(2).clearScore).toBe(200)
+    expect(getLevelDef(10).clearScore).toBe(1000)
     expect(getLevelDef(1).clearScore).toBeLessThan(getLevelDef(100).clearScore)
     expect(getLevelDef(100).clearScore).toBeLessThan(getLevelDef(500).clearScore)
   })
@@ -82,5 +85,15 @@ describe('SaveService levels', () => {
     expect(r.cleared).toBe(true)
     expect(r.unlockedNext).toBe(true)
     expect(save.getLevelProgress().unlocked).toBe(2)
+  })
+
+  it('does not unlock next level when score is below clear', () => {
+    const save = new SaveService(memoryStorage())
+    const clear = getLevelDef(1).clearScore
+    const r = save.recordLevelRun(1, clear - 1, clear)
+    expect(r.cleared).toBe(false)
+    expect(r.unlockedNext).toBe(false)
+    expect(save.getLevelProgress().unlocked).toBe(1)
+    expect(save.getLevelProgress().cleared).toEqual([])
   })
 })

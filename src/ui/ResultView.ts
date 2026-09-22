@@ -126,11 +126,12 @@ export class ResultView {
       oneMoreBtn.classList.add('btn-ghost')
       oneMoreBtn.textContent = t('retryLevel')
     } else {
+      // Lost / not cleared: hide next-level and offer replay only
       askEl.textContent = ''
       nextBtn.classList.add('hidden')
       oneMoreBtn.classList.add('btn-primary')
       oneMoreBtn.classList.remove('btn-ghost')
-      oneMoreBtn.textContent = t('oneMore')
+      oneMoreBtn.textContent = t('retryLevel')
     }
 
     this.root.querySelector('[data-score]')!.textContent = String(payload.stats.score)

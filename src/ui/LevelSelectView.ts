@@ -111,7 +111,7 @@ export class LevelSelectView {
       btn.addEventListener('click', (e) => {
         e.stopPropagation()
         const lv = Number((btn as HTMLElement).dataset.level)
-        if (!lv) return
+        if (!lv || lv > this.unlockedMax) return
         this.hide()
         this.onPick?.(lv)
       })

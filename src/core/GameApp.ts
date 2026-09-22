@@ -423,12 +423,19 @@ export class GameApp {
   }
 
   private startPlaying(level = 1): void {
+    const prog = this.save.getLevelProgress()
+    const lv = Math.max(1, Math.min(LEVEL_COUNT, Math.floor(level)))
+    // Progression lock: cannot start a level that is still locked
+    if (lv > prog.unlocked) {
+      this.openLevelSelect()
+      return
+    }
     this.audio.unlock()
     void this.audio.resume()
     this.activeMode = GameModeId.Classic
-    this.activeLevel = level
+    this.activeLevel = lv
     this.run.setMode(GameModeId.Classic)
-    this.run.setLevel(level)
+    this.run.setLevel(lv)
     this.showMenu = false
     const menu = this.root.querySelector('[data-menu]') as HTMLElement
     menu.classList.add('hidden')
@@ -460,11 +467,18 @@ export class GameApp {
   }
 
   private goNextLevel(): void {
-    if (this.activeLevel >= LEVEL_COUNT) {
-      this.goHome()
+    const prog = this.save.getLevelProgress()
+    const next = this.activeLevel + 1
+    // Must clear current level before advancing; otherwise replay
+    if (
+      this.activeLevel >= LEVEL_COUNT ||
+      !prog.cleared.includes(this.activeLevel) ||
+      next > prog.unlocked
+    ) {
+      this.restartInstant()
       return
     }
-    this.startPlaying(this.activeLevel + 1)
+    this.startPlaying(next)
   }
 
   /** Same seed — practice the run that just ended. */
@@ -506,27 +520,27 @@ export class GameApp {
       modeId: payload.modeId,
       endReason: payload.endReason,
     })
-    let levelCleared = false
+    const curDef = getLevelDef(payload.level)
+    // Cleared this run only when score meets the level goal
+    const levelCleared = payload.stats.score >= curDef.clearScore
     let nextLevelUnlocked = false
     const toRecord = new Set(this.run.getClearedDuringRun())
-    const curDef = getLevelDef(payload.level)
-    if (payload.stats.score >= curDef.clearScore) {
+    if (levelCleared) {
       toRecord.add(payload.level)
     }
     for (const lv of [...toRecord].sort((a, b) => a - b)) {
       const def = getLevelDef(lv)
       const r = this.save.recordLevelRun(lv, payload.stats.score, def.clearScore)
-      if (r.cleared) levelCleared = true
       if (r.unlockedNext) nextLevelUnlocked = true
     }
-    const peak = Math.min(LEVEL_COUNT, Math.max(payload.level, ...toRecord, 1))
     const prog = this.save.getLevelProgress()
-    if (peak > prog.unlocked) {
-      this.save.applyLevelProgress({
-        ...prog,
-        unlocked: Math.min(LEVEL_COUNT, Math.max(prog.unlocked, peak)),
-      })
+    // Offer next only if this level is cleared and the next slot is unlocked
+    if (levelCleared && payload.level < LEVEL_COUNT && prog.unlocked > payload.level) {
       nextLevelUnlocked = true
+    }
+    // Still track best score on a failed run (no unlock)
+    if (!levelCleared && payload.stats.score > 0) {
+      this.save.recordLevelRun(payload.level, payload.stats.score, curDef.clearScore)
     }
     this.activeLevel = payload.level
     if (payload.isNewBest) this.audio.playNewRecord()
