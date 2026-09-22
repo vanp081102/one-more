@@ -304,8 +304,9 @@ body {
 
 .menu.hidden,
 .result.hidden,
-.result .hidden {
-  display: none;
+.result .hidden,
+.result [data-next-level][hidden] {
+  display: none !important;
 }
 
 .menu h1 {
