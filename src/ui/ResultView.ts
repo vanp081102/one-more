@@ -104,13 +104,14 @@ export class ResultView {
     const oneMoreBtn = this.root.querySelector('[data-one-more]') as HTMLElement
 
     const canOfferNext =
+      payload.endReason === 'complete' &&
       payload.levelCleared &&
-      payload.level < LEVEL_COUNT &&
-      (payload.nextLevelUnlocked || payload.endReason === 'complete')
+      payload.nextLevelUnlocked &&
+      payload.level < LEVEL_COUNT
 
     this.pendingNextLevel = canOfferNext ? payload.level + 1 : 0
 
-    if (payload.levelCleared) {
+    if (payload.endReason === 'complete' && payload.levelCleared) {
       levelEl.textContent = t('levelCleared')
     } else if (payload.clearScore > 0) {
       levelEl.textContent = `${payload.stats.score}/${payload.clearScore}`
@@ -141,7 +142,7 @@ export class ResultView {
     this.root.querySelector('[data-seed]')!.textContent = `${t('seed')} ${payload.seed}`
 
     const missEl = this.root.querySelector('[data-miss]')!
-    if (payload.endReason === 'complete' || payload.levelCleared) {
+    if (payload.endReason === 'complete' && payload.levelCleared) {
       missEl.textContent = t('levelCleared')
     } else if (payload.endReason === 'imperfect') {
       missEl.textContent = gradeLabel(payload.judgement.grade)

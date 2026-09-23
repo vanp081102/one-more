@@ -508,26 +508,33 @@ export class GameApp {
     })
     let levelCleared = false
     let nextLevelUnlocked = false
-    const toRecord = new Set(this.run.getClearedDuringRun())
-    const curDef = getLevelDef(payload.level)
-    if (payload.stats.score >= curDef.clearScore) {
+
+    // Only clear / unlock when the run actually completed by hitting the score goal
+    const didClear =
+      payload.endReason === 'complete' &&
+      payload.stats.score >= getLevelDef(payload.level).clearScore
+
+    if (didClear) {
+      const toRecord = new Set(this.run.getClearedDuringRun())
       toRecord.add(payload.level)
+      for (const lv of [...toRecord].sort((a, b) => a - b)) {
+        const def = getLevelDef(lv)
+        const r = this.save.recordLevelRun(lv, payload.stats.score, def.clearScore)
+        if (r.cleared) levelCleared = true
+        if (r.unlockedNext) nextLevelUnlocked = true
+      }
+      // Reaching the goal always counts as a clear for this screen
+      levelCleared = true
+      if (payload.level < LEVEL_COUNT) nextLevelUnlocked = true
+    } else {
+      // Loss / imperfect: still store best for this level, never unlock next
+      this.save.recordLevelRun(
+        payload.level,
+        payload.stats.score,
+        Number.POSITIVE_INFINITY,
+      )
     }
-    for (const lv of [...toRecord].sort((a, b) => a - b)) {
-      const def = getLevelDef(lv)
-      const r = this.save.recordLevelRun(lv, payload.stats.score, def.clearScore)
-      if (r.cleared) levelCleared = true
-      if (r.unlockedNext) nextLevelUnlocked = true
-    }
-    const peak = Math.min(LEVEL_COUNT, Math.max(payload.level, ...toRecord, 1))
-    const prog = this.save.getLevelProgress()
-    if (peak > prog.unlocked) {
-      this.save.applyLevelProgress({
-        ...prog,
-        unlocked: Math.min(LEVEL_COUNT, Math.max(prog.unlocked, peak)),
-      })
-      nextLevelUnlocked = true
-    }
+
     this.activeLevel = payload.level
     if (payload.isNewBest) this.audio.playNewRecord()
     this.lastSeed = payload.seed

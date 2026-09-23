@@ -85,8 +85,7 @@ export function getLevelDef(level: number): LevelDef {
     level: lv,
     startSuccesses: Math.floor(lerp(0, 220, t)),
     speedRampMul: lerp(1, 2.8, t),
-    // Soft quadratic so late levels stay reachable with lower per-hit points
-    clearScore: Math.round(70 + lv * 10 + lv * lv * 0.085),
+    clearScore: lv * 100,
     scoreMul: lerp(1, 0.28, t),
     unlockMoving,
     unlockReverse,
