@@ -85,7 +85,7 @@ export function getLevelDef(level: number): LevelDef {
     level: lv,
     startSuccesses: Math.floor(lerp(0, 220, t)),
     speedRampMul: lerp(1, 2.8, t),
-    clearScore: lv * 500,
+    clearScore: lv * 250,
     scoreMul: lerp(1, 0.28, t),
     unlockMoving,
     unlockReverse,

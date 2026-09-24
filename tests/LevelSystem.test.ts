@@ -36,9 +36,12 @@ function memoryStorage(): Storage {
 describe('LevelConfig 1–500', () => {
   it('defines 500 levels with rising clear scores', () => {
     expect(LEVEL_COUNT).toBe(500)
-    expect(getLevelDef(1).clearScore).toBe(500)
-    expect(getLevelDef(50).clearScore).toBe(25000)
-    expect(getLevelDef(100).clearScore).toBe(50000)
+    expect(getLevelDef(1).clearScore).toBe(250)
+    expect(getLevelDef(2).clearScore).toBe(500)
+    expect(getLevelDef(3).clearScore).toBe(750)
+    expect(getLevelDef(4).clearScore).toBe(1000)
+    expect(getLevelDef(50).clearScore).toBe(12500)
+    expect(getLevelDef(100).clearScore).toBe(25000)
     expect(getLevelDef(1).clearScore).toBeLessThan(getLevelDef(100).clearScore)
     expect(getLevelDef(100).clearScore).toBeLessThan(getLevelDef(500).clearScore)
   })
