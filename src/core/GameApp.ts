@@ -423,12 +423,17 @@ export class GameApp {
   }
 
   private startPlaying(level = 1): void {
+    const unlocked = this.save.getLevelProgress().unlocked
+    const lv = Math.max(1, Math.min(LEVEL_COUNT, Math.floor(level)))
+    // Never start a level that is still locked
+    if (lv > unlocked) return
+
     this.audio.unlock()
     void this.audio.resume()
     this.activeMode = GameModeId.Classic
-    this.activeLevel = level
+    this.activeLevel = lv
     this.run.setMode(GameModeId.Classic)
-    this.run.setLevel(level)
+    this.run.setLevel(lv)
     this.showMenu = false
     const menu = this.root.querySelector('[data-menu]') as HTMLElement
     menu.classList.add('hidden')
@@ -460,11 +465,13 @@ export class GameApp {
   }
 
   private goNextLevel(): void {
-    if (this.activeLevel >= LEVEL_COUNT) {
-      this.goHome()
+    const next = this.activeLevel + 1
+    const unlocked = this.save.getLevelProgress().unlocked
+    if (next > LEVEL_COUNT || next > unlocked) {
+      this.restartInstant()
       return
     }
-    this.startPlaying(this.activeLevel + 1)
+    this.startPlaying(next)
   }
 
   /** Same seed — practice the run that just ended. */

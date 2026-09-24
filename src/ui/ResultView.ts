@@ -31,7 +31,7 @@ export class ResultView {
         <div class="result-miss" data-miss></div>
         <div class="result-record" data-record></div>
         <div class="result-unlock" data-unlock></div>
-        <button type="button" class="btn-primary hidden" data-next-level>${t('goNextLevel')}</button>
+        <button type="button" class="btn-primary hidden" data-next-level hidden>${t('goNextLevel')}</button>
         <button type="button" class="btn-primary" data-one-more>${t('oneMore')}</button>
         <button type="button" class="btn-ghost" data-replay>${t('replaySeed')}</button>
         <button type="button" class="btn-ghost" data-share>${t('share')}</button>
@@ -122,6 +122,7 @@ export class ResultView {
     if (canOfferNext) {
       askEl.textContent = `${t('clearAsk')} ${this.pendingNextLevel}?`
       nextBtn.classList.remove('hidden')
+      nextBtn.hidden = false
       nextBtn.textContent = `${t('goNextLevel')} ${this.pendingNextLevel}`
       oneMoreBtn.classList.remove('btn-primary')
       oneMoreBtn.classList.add('btn-ghost')
@@ -129,6 +130,7 @@ export class ResultView {
     } else {
       askEl.textContent = ''
       nextBtn.classList.add('hidden')
+      nextBtn.hidden = true
       oneMoreBtn.classList.add('btn-primary')
       oneMoreBtn.classList.remove('btn-ghost')
       oneMoreBtn.textContent = t('oneMore')
