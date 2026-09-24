@@ -347,7 +347,7 @@ export class RunManager {
   }
 
   private ensureBallLanes(count: number): void {
-    const n = Math.max(1, Math.min(6, count))
+    const n = Math.max(1, Math.min(5, count))
     while (this.lanes.length < n) {
       this.lanes.push({
         object: new ObjectController(),

@@ -14,7 +14,7 @@ export interface ModeBest {
 }
 
 export interface LevelProgress {
-  /** Highest level unlocked (1–500) */
+  /** Highest level unlocked (1–100) */
   unlocked: number
   cleared: number[]
   /** Best score per level number */

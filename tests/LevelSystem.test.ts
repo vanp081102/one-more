@@ -33,43 +33,41 @@ function memoryStorage(): Storage {
   }
 }
 
-describe('LevelConfig 1–500', () => {
-  it('defines 500 levels with rising clear scores', () => {
-    expect(LEVEL_COUNT).toBe(500)
+describe('LevelConfig 1–100', () => {
+  it('defines 100 levels with rising clear scores', () => {
+    expect(LEVEL_COUNT).toBe(100)
     expect(getLevelDef(1).clearScore).toBe(250)
     expect(getLevelDef(2).clearScore).toBe(500)
     expect(getLevelDef(3).clearScore).toBe(750)
     expect(getLevelDef(4).clearScore).toBe(1000)
-    expect(getLevelDef(50).clearScore).toBe(12500)
-    expect(getLevelDef(100).clearScore).toBe(25000)
-    expect(getLevelDef(1).clearScore).toBeLessThan(getLevelDef(100).clearScore)
-    expect(getLevelDef(100).clearScore).toBeLessThan(getLevelDef(500).clearScore)
+    expect(getLevelDef(1).clearScore).toBeLessThan(getLevelDef(50).clearScore)
+    expect(getLevelDef(50).clearScore).toBeLessThan(getLevelDef(100).clearScore)
   })
 
   it('harder scoring at high levels', () => {
-    expect(getLevelDef(1).scoreMul).toBeGreaterThan(getLevelDef(500).scoreMul)
-    expect(resolveLevelRun(500).speedRampMul).toBeGreaterThan(resolveLevelRun(1).speedRampMul)
+    expect(getLevelDef(1).scoreMul).toBeGreaterThan(getLevelDef(100).scoreMul)
+    expect(resolveLevelRun(100).speedRampMul).toBeGreaterThan(resolveLevelRun(1).speedRampMul)
   })
 
   it('unlocks mode DNA across the ladder', () => {
-    expect(getLevelDef(50).unlockMoving).toBe(false)
-    expect(getLevelDef(60).unlockMoving).toBe(true)
-    expect(getLevelDef(190).unlockReverse).toBe(true)
-    expect(getLevelDef(310).unlockMemory).toBe(true)
-    expect(getLevelDef(390).chaosMix).toBe(true)
-    expect(getLevelDef(460).perfectOnly).toBe(true)
-    expect(levelFeatureTags(400).length).toBeGreaterThan(3)
+    expect(getLevelDef(10).unlockMoving).toBe(false)
+    expect(getLevelDef(12).unlockMoving).toBe(true)
+    expect(getLevelDef(38).unlockReverse).toBe(true)
+    expect(getLevelDef(62).unlockMemory).toBe(true)
+    expect(getLevelDef(78).chaosMix).toBe(true)
+    expect(getLevelDef(90).perfectOnly).toBe(true)
+    expect(levelFeatureTags(80).length).toBeGreaterThan(3)
   })
 
-  it('adds one ball every 100 levels', () => {
+  it('adds one ball every 25 levels', () => {
     expect(ballCountForLevel(1)).toBe(1)
-    expect(ballCountForLevel(99)).toBe(1)
-    expect(ballCountForLevel(100)).toBe(2)
-    expect(ballCountForLevel(200)).toBe(3)
-    expect(ballCountForLevel(300)).toBe(4)
-    expect(ballCountForLevel(400)).toBe(5)
-    expect(ballCountForLevel(500)).toBe(6)
-    expect(levelFeatureTags(100)).toContain('×2')
+    expect(ballCountForLevel(24)).toBe(1)
+    expect(ballCountForLevel(25)).toBe(2)
+    expect(ballCountForLevel(49)).toBe(2)
+    expect(ballCountForLevel(50)).toBe(3)
+    expect(ballCountForLevel(75)).toBe(4)
+    expect(ballCountForLevel(100)).toBe(5)
+    expect(levelFeatureTags(25)).toContain('×2')
   })
 
   it('level-up delta adds steps', () => {

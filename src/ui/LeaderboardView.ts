@@ -241,7 +241,7 @@ export class LeaderboardView {
       return
     }
 
-    // progress — single 1–500 ladder
+    // progress — single 1–100 ladder
     status.textContent = this.status || t('clearedLevels')
     const p = this.modeLevels.classic ?? { unlocked: 1, cleared: [], bests: {} }
     const cleared = p.cleared.length

@@ -1,6 +1,6 @@
-/** Single ladder: Level 1 → 500. Higher = harder to score, richer patterns. */
+/** Single ladder: Level 1 → 100. Higher = harder, richer pattern mix. */
 
-export const LEVEL_COUNT = 500
+export const LEVEL_COUNT = 100
 
 export interface LevelDef {
   level: number
@@ -52,18 +52,18 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * clamp01(t)
 }
 
-/** Feature unlock gates scaled for the 1–500 ladder. */
+/** Feature unlock gates for the 1–100 ladder (mode DNA stacks up). */
 const GATE = {
-  moving: 60,
-  fake: 125,
-  reverse: 190,
-  chain: 250,
-  memory: 310,
-  chaos: 390,
-  perfect: 460,
+  moving: 12,
+  fake: 25,
+  reverse: 38,
+  chain: 50,
+  memory: 62,
+  chaos: 78,
+  perfect: 90,
 } as const
 
-/** Build definition for a single level (1–500). */
+/** Build definition for a single level (1–100). */
 export function getLevelDef(level: number): LevelDef {
   const lv = Math.max(1, Math.min(LEVEL_COUNT, Math.floor(level)))
   const t = (lv - 1) / (LEVEL_COUNT - 1)
@@ -83,10 +83,10 @@ export function getLevelDef(level: number): LevelDef {
 
   return {
     level: lv,
-    startSuccesses: Math.floor(lerp(0, 220, t)),
-    speedRampMul: lerp(1, 2.8, t),
+    startSuccesses: Math.floor(lerp(0, 90, t)),
+    speedRampMul: lerp(1, 2.5, t),
     clearScore: lv * 250,
-    scoreMul: lerp(1, 0.28, t),
+    scoreMul: lerp(1, 0.35, t),
     unlockMoving,
     unlockReverse,
     unlockFake,
@@ -119,10 +119,10 @@ export function levelUpDifficultyDelta(
   }
 }
 
-/** Balls on field: +1 every 100 levels (L1–99:1 … L400–500:5+). */
+/** Balls: +1 every 25 levels (L1–24:1, L25–49:2, L50–74:3, L75–99:4, L100:5). */
 export function ballCountForLevel(level: number): number {
   const lv = Math.max(1, Math.min(LEVEL_COUNT, Math.floor(level)))
-  return Math.min(6, 1 + Math.floor(lv / 100))
+  return Math.min(5, 1 + Math.floor(lv / 25))
 }
 
 /** Short tag for UI (which “mode DNA” is active). */
